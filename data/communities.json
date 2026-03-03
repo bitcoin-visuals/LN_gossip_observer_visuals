@@ -1,0 +1,47 @@
+{
+  "downtown_core": {
+    "label": "Downtown / Core",
+    "color": "#e63946",
+    "description": "ACINQ, Bitrefill, Block, Kraken, bfx, LNBiG, Strike, OpenNode, okx"
+  },
+  "midtown": {
+    "label": "Midtown",
+    "color": "#457b9d",
+    "description": "1ML, CoinGate, WalletOfSatoshi, Mullvad, Blocktank, jb55"
+  },
+  "brooklyn": {
+    "label": "Brooklyn",
+    "color": "#2a9d8f",
+    "description": "LOOP, IBEX, BCash_Is_Trash, Noones, Bipa, El Salvador"
+  },
+  "les_voltage": {
+    "label": "Lower East Side",
+    "color": "#e9c46a",
+    "description": "Voltage, nerdminerstore, coinos"
+  },
+  "lic_mempool": {
+    "label": "Long Island City",
+    "color": "#f4a261",
+    "description": "lnrouter, mempool.space, Einundzwanzig"
+  },
+  "suburbs": {
+    "label": "Suburbs",
+    "color": "#8d99ae",
+    "description": "Low-degree nodes, Start9, Alby Hub"
+  },
+  "lnt_periphery": {
+    "label": "LNT Periphery",
+    "color": "#6d6875",
+    "description": "BTCLNT project (~2000 nodes), LNT.chengdu, LNT.Thailand"
+  },
+  "jersey_business": {
+    "label": "Jersey City / Business",
+    "color": "#b5838d",
+    "description": "Team Corn (Korean), River, Zap, Bitnob, Binance"
+  },
+  "unknown": {
+    "label": "Unknown",
+    "color": "#adb5bd",
+    "description": "Not classified"
+  }
+}

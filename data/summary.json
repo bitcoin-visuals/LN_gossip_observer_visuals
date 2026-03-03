@@ -1,0 +1,18 @@
+{
+  "total_messages": 416759,
+  "total_timing_rows": 163947218,
+  "total_peers": 978,
+  "peers_with_ip": 758,
+  "peers_tor_only": 220,
+  "collection_duration_hours": 23.5,
+  "msg_types": {
+    "1": "channel_announcement",
+    "2": "node_announcement",
+    "3": "channel_update"
+  },
+  "msg_type_counts": {
+    "channel_announcement": 39979,
+    "node_announcement": 125208,
+    "channel_update": 251572
+  }
+}

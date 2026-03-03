@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gossip Tomography — LN Gossip Propagation Analyzer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: linear-gradient(90deg, #0a0a0f 0%, #1a1a2e 50%, #0a0a0f 100%);
+            border-bottom: 1px solid #ff6b3520;
+            padding: 6px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 40px;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 14px; color: #ff6b35; letter-spacing: 2px; }
+        .header h1 span { color: #555; font-weight: 300; font-size: 11px; }
+        .header .stats { display: flex; gap: 16px; font-size: 10px; color: #666; }
+        .header .stats .val { color: #ff6b35; font-weight: bold; }
+
+        /* ── 2×2 Grid ── */
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            flex: 1;
+            min-height: 0;
+            gap: 1px;
+            background: #1a1a2e;
+        }
+
+        /* ── Threat Bar (bottom 10vh) ── */
+        .threat-bar {
+            height: 10vh;
+            min-height: 56px;
+            flex-shrink: 0;
+            background: #08080d;
+            border-top: 1px solid #e6394640;
+            display: flex;
+            align-items: stretch;
+        }
+        .threat-slot {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            cursor: pointer;
+            border-right: 1px solid #1a1a2e;
+            transition: background 0.15s;
+            position: relative;
+            padding: 4px 2px;
+            min-width: 0;
+        }
+        .threat-slot:last-child { border-right: none; }
+        .threat-slot:hover { background: #12121e; }
+        .threat-slot .ts-icon { font-size: 18px; line-height: 1; }
+        .threat-slot .ts-count {
+            font-size: 16px;
+            font-weight: bold;
+            line-height: 1;
+        }
+        .threat-slot .ts-label {
+            font-size: 7px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #777;
+            text-align: center;
+            line-height: 1.15;
+            max-width: 100%;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            padding: 0 2px;
+        }
+        .threat-slot .ts-sev {
+            font-size: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            padding: 1px 4px;
+            border-radius: 2px;
+            line-height: 1;
+        }
+        .ts-sev.sev-high   { background: #e6394630; color: #e63946; }
+        .ts-sev.sev-medium { background: #e9c46a30; color: #e9c46a; }
+        .ts-sev.sev-low    { background: #457b9d30; color: #457b9d; }
+
+        /* Threat popup → now a full overlay card */
+        .threat-card-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 2000;
+            backdrop-filter: blur(4px);
+            justify-content: center;
+            align-items: center;
+        }
+        .threat-card-overlay.open { display: flex; }
+        .threat-card {
+            background: #101018;
+            border: 1px solid #e6394650;
+            border-radius: 8px;
+            width: 560px;
+            max-width: 94vw;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+            animation: cardIn 0.18s ease-out;
+        }
+        .tc-header {
+            padding: 14px 16px 10px;
+            border-bottom: 1px solid #1a1a2e;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .tc-header .tc-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #e63946;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tc-header .tc-close {
+            background: none;
+            border: 1px solid #333;
+            color: #888;
+            font-size: 14px;
+            cursor: pointer;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-family: inherit;
+        }
+        .tc-header .tc-close:hover { border-color: #e63946; color: #e63946; }
+        .tc-summary {
+            padding: 6px 16px 10px;
+            font-size: 10px;
+            color: #666;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .tc-section {
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .tc-section:last-child { border-bottom: none; }
+        .tc-section-header {
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+        .tc-section-header:hover { background: #12121e; }
+        .tc-section-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tc-section-icon { font-size: 15px; }
+        .tc-section-name { font-size: 11px; font-weight: 600; }
+        .tc-section-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tc-section-count {
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .tc-section-chevron {
+            font-size: 10px;
+            color: #555;
+            transition: transform 0.15s;
+        }
+        .tc-section.open .tc-section-chevron { transform: rotate(90deg); }
+        .tc-section-body {
+            display: none;
+            padding: 0 16px 10px;
+        }
+        .tc-section.open .tc-section-body { display: block; }
+        .tc-attack-desc {
+            font-size: 9px;
+            color: #999;
+            line-height: 1.5;
+            margin-bottom: 6px;
+        }
+        .tc-attack-desc .tc-attack-label {
+            color: #e63946;
+            font-weight: 600;
+        }
+        .tc-source {
+            font-size: 8px;
+            color: #444;
+            margin-bottom: 6px;
+        }
+        .tc-stat-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            margin-bottom: 6px;
+        }
+        .tc-stat-row .tc-stat-label { color: #888; }
+        .tc-stat-row .tc-stat-val { font-weight: bold; }
+        .tc-node-list {
+            max-height: 18vh;
+            overflow-y: auto;
+        }
+        .tc-node-chip {
+            display: inline-block;
+            font-size: 8px;
+            padding: 2px 5px;
+            margin: 1px;
+            background: #1a1a2e;
+            border-radius: 2px;
+            color: #aaa;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+        }
+        .tc-node-chip:hover { background: #e6394630; color: #e63946; }
+
+        /* Placeholder slots */
+        .threat-slot.placeholder {
+            cursor: default;
+            opacity: 0.35;
+        }
+        .threat-slot.placeholder:hover { background: transparent; }
+        .threat-slot.placeholder .ts-icon { filter: grayscale(1); }
+        .threat-slot.placeholder .ts-label { color: #444; }
+
+        /* ── Quadrant base ── */
+        .quad {
+            background: #0a0a0f;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+            position: relative;
+        }
+        .quad-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 10px;
+            background: #0d0d14;
+            border-bottom: 1px solid #1a1a2e;
+            flex-shrink: 0;
+        }
+        .quad-header h2 {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .quad-header .badge {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .quad-body {
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* ── Q1: Propagation Replay (top-left) ── */
+        .q-replay .quad-header h2 { color: #ff6b35; }
+        .q-replay .badge { background: #ff6b3520; color: #ff6b35; }
+
+        .replay-layout {
+            display: flex;
+            height: 100%;
+        }
+        .replay-sidebar {
+            width: 180px;
+            border-right: 1px solid #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        .replay-canvas-wrap {
+            flex: 1;
+            position: relative;
+            min-width: 0;
+        }
+        .replay-canvas-wrap canvas { display: block; }
+
+        /* Message list */
+        .msg-filter {
+            display: flex;
+            gap: 2px;
+            padding: 4px 6px;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .msg-filter button {
+            flex: 1;
+            padding: 3px 2px;
+            font-size: 8px;
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            color: #666;
+            cursor: pointer;
+            border-radius: 2px;
+            font-family: inherit;
+        }
+        .msg-filter button.active {
+            background: #ff6b3525;
+            border-color: #ff6b3560;
+            color: #ff6b35;
+        }
+        .msg-list {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+        .msg-item {
+            padding: 4px 6px;
+            font-size: 9px;
+            border-bottom: 1px solid #0d0d14;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 4px;
+        }
+        .msg-item:hover { background: #1a1a2e; }
+        .msg-item.active { background: #ff6b3512; border-left: 2px solid #ff6b35; }
+        .msg-item .type-badge {
+            font-size: 7px;
+            padding: 1px 3px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .type-chan_ann { background: #2a9d8f25; color: #2a9d8f; }
+        .type-node_ann { background: #e9c46a25; color: #e9c46a; }
+        .type-chan_upd { background: #457b9d25; color: #457b9d; }
+        .msg-item .peers-count { color: #555; font-size: 8px; }
+
+        /* Playback bar */
+        .playback-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            border-top: 1px solid #1a1a2e;
+            background: #0d0d14;
+            flex-shrink: 0;
+        }
+        .playback-bar button {
+            padding: 2px 8px;
+            font-size: 10px;
+            background: #ff6b35;
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            border-radius: 2px;
+            font-family: inherit;
+            line-height: 1.4;
+        }
+        .playback-bar button:hover { background: #ff8555; }
+        .playback-bar button.secondary { background: #2a2a3e; color: #888; }
+        .playback-bar .time {
+            font-size: 12px;
+            color: #ff6b35;
+            min-width: 55px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .playback-bar .speed-ctrl {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: auto;
+            font-size: 9px;
+            color: #555;
+        }
+        .playback-bar input[type="range"] { width: 60px; }
+        .progress-bar {
+            height: 3px;
+            background: #1a1a2e;
+            flex-shrink: 0;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            background: #ff6b35;
+            width: 0%;
+            transition: width 0.05s linear;
+        }
+
+        /* ── Q2: World Map (top-right) ── */
+        .q-map .quad-header h2 { color: #457b9d; }
+        .q-map .badge { background: #457b9d20; color: #457b9d; }
+        #map-container { width: 100%; height: 100%; }
+        .leaflet-container { background: #0a0a0f !important; }
+
+        /* ── Q3: Fast Relay Heuristics (bottom-left) ── */
+        .q-suspects .quad-header h2 { color: #e63946; }
+        .q-suspects .badge { background: #e6394620; color: #e63946; }
+        .suspect-list {
+            height: 100%;
+            overflow-y: auto;
+            padding: 4px;
+        }
+        .suspect-card {
+            background: #0d0d14;
+            border: 1px solid #1a1a2e;
+            border-radius: 3px;
+            padding: 6px 8px;
+            margin-bottom: 3px;
+            font-size: 9px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .suspect-card:hover { border-color: #e6394640; }
+        .suspect-card.highlighted {
+            border-color: #e63946;
+            background: #e6394612;
+        }
+        .suspect-card .alias {
+            color: #e0e0e0;
+            font-weight: bold;
+            font-size: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .suspect-card .meta { color: #555; line-height: 1.6; }
+        .suspect-card .meta strong { color: #aaa; }
+        .suspect-card .score-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 3px;
+        }
+        .suspect-card .bar-track {
+            flex: 1;
+            height: 4px;
+            background: #1a1a2e;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .suspect-card .bar-fill {
+            height: 100%;
+            background: #e63946;
+            border-radius: 2px;
+        }
+        .suspect-card .bar-label {
+            font-size: 8px;
+            color: #e63946;
+            min-width: 32px;
+            text-align: right;
+        }
+        .suspect-card .tag {
+            display: inline-block;
+            font-size: 7px;
+            padding: 1px 4px;
+            border-radius: 2px;
+            margin-right: 2px;
+        }
+        .tag-tor { background: #a855f720; color: #a855f7; }
+        .tag-clearnet { background: #06d6a020; color: #06d6a0; }
+
+        /* ── Q4: Co-location signals (bottom-right) ── */
+        .q-coloc .quad-header h2 { color: #e9c46a; }
+        .q-coloc .badge { background: #e9c46a20; color: #e9c46a; }
+        .coloc-list {
+            height: 100%;
+            overflow-y: auto;
+            padding: 4px;
+        }
+        .coloc-card {
+            background: #0d0d14;
+            border: 1px solid #1a1a2e;
+            border-radius: 3px;
+            padding: 6px 8px;
+            margin-bottom: 3px;
+            font-size: 9px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .coloc-card:hover { border-color: #e9c46a40; }
+        .coloc-card.highlighted {
+            border-color: #e9c46a;
+            background: #e9c46a10;
+        }
+        .coloc-card .subnet {
+            color: #e9c46a;
+            font-weight: bold;
+            font-size: 10px;
+            margin-bottom: 2px;
+        }
+        .coloc-card .peer-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+            margin-top: 3px;
+        }
+        .coloc-card .chip {
+            font-size: 8px;
+            padding: 1px 5px;
+            background: #1a1a2e;
+            border-radius: 2px;
+            color: #aaa;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        .coloc-card .chip:hover { background: #e9c46a25; color: #e9c46a; }
+        .coloc-card .chip.highlighted { background: #e9c46a30; color: #e9c46a; }
+        .coloc-card .count-badge {
+            font-size: 8px;
+            color: #888;
+        }
+
+        /* ── Tooltip ── */
+        .tooltip {
+            display: none;
+            position: fixed;
+            background: #12121dee;
+            border: 1px solid #ff6b3540;
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 10px;
+            z-index: 1000;
+            pointer-events: none;
+            max-width: 260px;
+            backdrop-filter: blur(8px);
+        }
+        .tooltip .t-alias { color: #ff6b35; font-weight: bold; font-size: 11px; }
+        .tooltip .t-pubkey { color: #555; font-size: 8px; word-break: break-all; margin-top: 2px; }
+        .tooltip .t-ip { color: #06d6a0; margin-top: 3px; }
+        .tooltip .t-score { color: #888; margin-top: 3px; }
+        .tooltip .t-warn { color: #e63946; margin-top: 3px; }
+
+        /* ── Node Info Popup Card ── */
+        .node-card-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 2000;
+            backdrop-filter: blur(4px);
+            justify-content: center;
+            align-items: center;
+        }
+        .node-card-overlay.open { display: flex; }
+        .node-card {
+            background: #101018;
+            border: 1px solid #ff6b3540;
+            border-radius: 8px;
+            width: 460px;
+            max-width: 92vw;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+            animation: cardIn 0.18s ease-out;
+        }
+        @keyframes cardIn {
+            from { transform: scale(0.92) translateY(10px); opacity: 0; }
+            to { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .nc-header {
+            padding: 14px 16px 10px;
+            border-bottom: 1px solid #1a1a2e;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .nc-header .nc-alias {
+            color: #ff6b35;
+            font-weight: bold;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        .nc-header .nc-close {
+            background: none;
+            border: 1px solid #333;
+            color: #888;
+            font-size: 14px;
+            cursor: pointer;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-left: 10px;
+            font-family: inherit;
+        }
+        .nc-header .nc-close:hover { border-color: #ff6b35; color: #ff6b35; }
+        .nc-pubkey {
+            padding: 0 16px;
+            color: #555;
+            font-size: 9px;
+            word-break: break-all;
+            margin-top: 4px;
+            margin-bottom: 8px;
+        }
+        .nc-section {
+            padding: 8px 16px 10px;
+            border-top: 1px solid #1a1a2e;
+        }
+        .nc-section-title {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #666;
+            margin-bottom: 6px;
+        }
+        .nc-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            padding: 3px 0;
+        }
+        .nc-row .nc-label { color: #888; }
+        .nc-row .nc-val { color: #e0e0e0; font-weight: 600; text-align: right; max-width: 60%; word-break: break-all; }
+        .nc-row .nc-val.nc-warn { color: #e63946; }
+        .nc-row .nc-val.nc-good { color: #06d6a0; }
+
+        .nc-features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+            margin-top: 4px;
+        }
+        .nc-feat-tag {
+            font-size: 8px;
+            padding: 2px 5px;
+            border-radius: 3px;
+            background: #1a1a2e;
+            color: #aaa;
+            border: 1px solid #2a2a3e;
+        }
+        .nc-feat-tag.known { background: #2a9d8f18; color: #2a9d8f; border-color: #2a9d8f40; }
+        .nc-feat-tag.unknown { background: #e9c46a12; color: #e9c46a; border-color: #e9c46a30; }
+
+        .nc-fingerprint-bar {
+            margin-top: 6px;
+        }
+        .nc-fp-track {
+            height: 6px;
+            background: #1a1a2e;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .nc-fp-fill {
+            height: 100%;
+            background: #a855f7;
+            border-radius: 3px;
+        }
+        .nc-fp-label {
+            font-size: 9px;
+            color: #a855f7;
+            margin-top: 2px;
+        }
+        .nc-fp-nodes-label {
+            font-size: 9px;
+            color: #666;
+            margin-top: 2px;
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 2px; }
+
+        /* Leaflet tooltip override */
+        .leaflet-tooltip { font-family: inherit; font-size: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>GOSSIP TOMOGRAPHY <span>// LN Gossip Propagation Analyzer</span></h1>
+    <div class="stats">
+        <span><span class="val" id="stat-peers">—</span> peers</span>
+        <span><span class="val" id="stat-msgs">—</span> msgs in archive</span>
+        <span><span class="val" id="stat-ips">—</span> map-located</span>
+        <span><span class="val" id="stat-suspects">—</span> fast relayers</span>
+        <span><span class="val" id="stat-coloc">—</span> co-location signals</span>
+    </div>
+</div>
+
+<div class="grid">
+    <!-- Q1: Propagation Replay (top-left) -->
+    <div class="quad q-replay">
+        <div class="quad-header">
+            <h2>📡 Message Propagation Replay</h2>
+            <span class="badge" id="replay-badge">0 replay msgs</span>
+        </div>
+        <div class="quad-body">
+            <div class="replay-layout">
+                <div class="replay-sidebar">
+                    <div class="msg-filter">
+                        <button class="active" data-type="all">All</button>
+                        <button data-type="channel_announcement">CA</button>
+                        <button data-type="node_announcement">NA</button>
+                        <button data-type="channel_update">CU</button>
+                    </div>
+                    <div class="msg-list" id="msg-list"></div>
+                </div>
+                <div class="replay-canvas-wrap" id="canvas-wrap">
+                    <canvas id="viz-canvas"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
+        <div class="playback-bar">
+            <button id="btn-play">▶</button>
+            <button class="secondary" id="btn-reset">↺</button>
+            <span class="time" id="time-display">0.00s</span>
+            <span class="speed-ctrl">
+                <input type="range" id="speed-slider" min="0.1" max="10" step="0.1" value="1">
+                <span id="speed-label">1×</span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Q2: World Map (top-right) -->
+    <div class="quad q-map">
+        <div class="quad-header">
+            <h2>🌍 Geolocation Map</h2>
+            <span class="badge" id="map-badge">0 mapped</span>
+        </div>
+        <div class="quad-body">
+            <div id="map-container"></div>
+        </div>
+    </div>
+
+    <!-- Q3: Fast relay heuristics (bottom-left) -->
+    <div class="quad q-suspects">
+        <div class="quad-header">
+            <h2>🔍 Fast Relay Heuristics</h2>
+            <span class="badge" id="suspect-badge">0</span>
+        </div>
+        <div class="quad-body">
+            <div class="suspect-list" id="suspect-list"></div>
+        </div>
+    </div>
+
+    <!-- Q4: Co-location signals (bottom-right) -->
+    <div class="quad q-coloc">
+        <div class="quad-header">
+            <h2>📍 Co-Location Signals (/24)</h2>
+            <span class="badge" id="coloc-badge">0 groups</span>
+        </div>
+        <div class="quad-body">
+            <div class="coloc-list" id="coloc-list"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Threat Indicator Bar -->
+<div class="threat-bar" id="threat-bar"></div>
+
+<!-- Threat Report Card Overlay -->
+<div class="threat-card-overlay" id="threat-card-overlay">
+    <div class="threat-card" id="threat-card"></div>
+</div>
+
+<!-- Node Info Popup Card -->
+<div class="node-card-overlay" id="node-card-overlay">
+    <div class="node-card" id="node-card"></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
