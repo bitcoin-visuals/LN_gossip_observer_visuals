@@ -508,7 +508,7 @@ function updateMapHighlights() {
         const pk = [...highlightedPeers][0];
         const peer = peers[pk];
         if (peer?.lat && peer?.lon) {
-            leafletMap.flyTo([peer.lat, peer.lon], 5, { duration: 0.5 });
+            leafletMap.setView([peer.lat, peer.lon], 5);
         }
     } else if (highlightedPeers.size > 1) {
         // Fit bounds to all highlighted peers with coords
@@ -517,9 +517,9 @@ function updateMapHighlights() {
             .filter(p => p?.lat && p?.lon)
             .map(p => [p.lat, p.lon]);
         if (coords.length > 1) {
-            leafletMap.flyToBounds(L.latLngBounds(coords).pad(0.3), { duration: 0.5 });
+            leafletMap.fitBounds(L.latLngBounds(coords).pad(0.3));
         } else if (coords.length === 1) {
-            leafletMap.flyTo(coords[0], 5, { duration: 0.5 });
+            leafletMap.setView(coords[0], 5);
         }
     }
 }
