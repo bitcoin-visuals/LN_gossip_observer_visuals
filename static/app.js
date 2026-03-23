@@ -6,7 +6,7 @@
 //    Q1  Propagation Replay (radial canvas)
 //    Q2  World Map (Leaflet)
 //    Q3  Fast Relay Heuristics
-//    Q4  Co-Location Signals
+//    Q4  Node Details
 // ═══════════════════════════════════════════════════════════════
 
 const DATA_BASE = "data";
@@ -124,6 +124,7 @@ let peerStates = {};
 let leafletMap = null;
 let mapMarkers = {};          // pubkey → L.circleMarker
 let mapHighlightLayer = null;
+let selectedNodePubkey = null;
 const DEFAULT_MAP_VIEW = {
     center: [25, 0],
     zoom: 2,
@@ -213,7 +214,10 @@ async function loadData() {
     document.getElementById("replay-badge").textContent = messages.length + " replay msgs";
     document.getElementById("map-badge").textContent = mapLocatedCount + " mapped";
     document.getElementById("suspect-badge").textContent = (leaks.first_responders || []).length;
-    document.getElementById("coloc-badge").textContent = (leaks.colocation || []).length + " groups";
+    const nodeDetailsBadge = document.getElementById("node-details-badge");
+    if (nodeDetailsBadge && !selectedNodePubkey) {
+        nodeDetailsBadge.textContent = "Select a node";
+    }
 }
 
 async function fetchJSON(url) {
@@ -423,6 +427,7 @@ function highlightPeers(pubkeys) {
 
 function clearHighlight() {
     highlightedPeers.clear();
+    selectedNodePubkey = null;
     updateAllHighlights();
 }
 
@@ -452,6 +457,8 @@ function updateAllHighlights() {
     });
     const highlightedColoc = document.querySelector(".coloc-card.highlighted");
     if (highlightedColoc) highlightedColoc.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+    renderNodeDetailsPlaceholder();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1401,6 +1408,7 @@ function openThreatCard(threatData, totalFp) {
 // ═══════════════════════════════════════════════════════════════
 
 function openNodeCard(pubkey) {
+    selectedNodePubkey = pubkey;
     const peer = peers[pubkey] || {};
     const fp = fpByPubkey[pubkey];
     const isSuspect = (leaks.first_responders || []).some(fr => (fr.pubkey || "") === pubkey);
@@ -1412,8 +1420,8 @@ function openNodeCard(pubkey) {
         (cl.peers || []).some(p => (typeof p === "string" ? p : p.pubkey) === pubkey)
     );
 
-    const overlay = document.getElementById("node-card-overlay");
-    const card = document.getElementById("node-card");
+    const card = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
 
     // ── Build card HTML ──
     let html = `
@@ -1549,8 +1557,15 @@ function openNodeCard(pubkey) {
     </div>`;
     }
 
+    card.style.display = "block";
+    card.style.padding = "0";
+    card.style.alignItems = "initial";
+    card.style.justifyContent = "initial";
+    card.style.color = "inherit";
+    card.style.fontSize = "inherit";
+    card.style.textAlign = "initial";
     card.innerHTML = html;
-    overlay.classList.add("open");
+    if (badge) badge.textContent = peer.alias || pubkey.slice(0, 10) + "…";
 
     // Wire close button
     document.getElementById("nc-close-btn").addEventListener("click", closeNodeCard);
@@ -1568,14 +1583,27 @@ function openNodeCard(pubkey) {
 }
 
 function closeNodeCard() {
-    document.getElementById("node-card-overlay").classList.remove("open");
+    selectedNodePubkey = null;
+    renderNodeDetailsPlaceholder();
 }
 
-// Close card on overlay background click or Escape
-document.addEventListener("click", (e) => {
-    const overlay = document.getElementById("node-card-overlay");
-    if (overlay && e.target === overlay) closeNodeCard();
-});
+function renderNodeDetailsPlaceholder() {
+    const card = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
+    if (!card) return;
+    if (selectedNodePubkey && peers[selectedNodePubkey]) return;
+
+    if (badge) badge.textContent = "Select a node";
+    card.style.display = "flex";
+    card.style.alignItems = "center";
+    card.style.justifyContent = "center";
+    card.style.padding = "24px";
+    card.style.color = "#666";
+    card.style.fontSize = "12px";
+    card.style.textAlign = "center";
+    card.innerHTML = "Select a node";
+}
+
 document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeNodeCard();
 });

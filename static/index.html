@@ -767,14 +767,14 @@
         </div>
     </div>
 
-    <!-- Q4: Reserved for future panel -->
+    <!-- Q4: Node Details -->
     <div class="quad q-coloc">
         <div class="quad-header">
-            <h2>🧭 Overlay Controls</h2>
-            <span class="badge" id="coloc-badge">bottom bar</span>
+            <h2>� Node Details</h2>
+            <span class="badge" id="node-details-badge">Select a node</span>
         </div>
-        <div class="quad-body" style="display:flex;align-items:center;justify-content:center;padding:24px;color:#666;font-size:12px;text-align:center;">
-            Co-location signals moved to the third button in the bottom bar for a cleaner dashboard layout.
+        <div class="quad-body" id="node-details-panel" style="overflow-y:auto;display:flex;align-items:center;justify-content:center;padding:24px;color:#666;font-size:12px;text-align:center;">
+            Select a node
         </div>
     </div>
 </div>
@@ -785,11 +785,6 @@
 <!-- Threat Report Card Overlay -->
 <div class="threat-card-overlay" id="threat-card-overlay">
     <div class="threat-card" id="threat-card"></div>
-</div>
-
-<!-- Node Info Popup Card -->
-<div class="node-card-overlay" id="node-card-overlay">
-    <div class="node-card" id="node-card"></div>
 </div>
 
 <div class="tooltip" id="tooltip"></div>
