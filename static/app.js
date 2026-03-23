@@ -302,7 +302,6 @@ function setupUI() {
 
     renderMessageList("all");
     renderSuspects();
-    renderColocation();
     renderAllMapMarkers();
 }
 
@@ -367,45 +366,46 @@ function renderSuspects() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Q4 — CO-LOCATION SIGNALS
+//  CO-LOCATION SIGNALS
 // ═══════════════════════════════════════════════════════════════
 
-function renderColocation() {
-    const container = document.getElementById("coloc-list");
-    container.innerHTML = "";
+function buildColocationCardsHtml() {
     const clList = (leaks.colocation || []).sort((a, b) => (b.count || 0) - (a.count || 0));
-
-    for (const cl of clList) {
+    return clList.map(cl => {
         const peerList = cl.peers || [];
         const pubkeys = peerList.map(p => typeof p === "string" ? p : p.pubkey);
-        const card = document.createElement("div");
-        card.className = "coloc-card";
-        card.dataset.pubkeys = JSON.stringify(pubkeys);
-
         const chipHtml = peerList.map(p => {
             const pk = typeof p === "string" ? p : p.pubkey;
             const alias = typeof p === "object" ? (p.alias || pk.slice(0, 10)) : (peers[pk]?.alias || pk.slice(0, 10));
             return `<span class="chip" data-pubkey="${pk}">${escHtml(alias)}</span>`;
         }).join("");
 
-        card.innerHTML = `
-            <div class="subnet">${cl.prefix || "?"} <span class="count-badge">(${cl.count || pubkeys.length} nodes)</span></div>
-            <div class="peer-chips">${chipHtml}</div>`;
+        return `
+            <div class="coloc-card" data-pubkeys='${JSON.stringify(pubkeys)}'>
+                <div class="subnet">${cl.prefix || "?"} <span class="count-badge">(${cl.count || pubkeys.length} nodes)</span></div>
+                <div class="peer-chips">${chipHtml}</div>
+            </div>`;
+    }).join("");
+}
 
-        // Click card → highlight all peers in group
+function wireColocationCardInteractions(scope = document) {
+    scope.querySelectorAll(".coloc-card").forEach(card => {
+        if (card.dataset.wired === "1") return;
+        card.dataset.wired = "1";
+
         card.addEventListener("click", (e) => {
-            if (e.target.classList.contains("chip")) return; // handled below
+            if (e.target.classList.contains("chip")) return;
+            const pubkeys = JSON.parse(card.dataset.pubkeys || "[]");
             highlightPeers(pubkeys);
         });
-        // Click individual chip → open node card
+
         card.querySelectorAll(".chip").forEach(chip => {
             chip.addEventListener("click", (e) => {
                 e.stopPropagation();
                 openNodeCard(chip.dataset.pubkey);
             });
         });
-        container.appendChild(card);
-    }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -880,9 +880,24 @@ function computeAndRenderThreats() {
     });
     bar.appendChild(slot2);
 
-    // ── Slots 3-7: Placeholders ──
+    // ── Slot 3: Co-location signals popup ──
+    const colocGroups = leaks.colocation || [];
+    const slot3 = document.createElement("div");
+    slot3.className = "threat-slot";
+    slot3.innerHTML = `
+        <span class="ts-icon">📍</span>
+        <span class="ts-count" style="color:#e9c46a">${colocGroups.length}</span>
+        <span class="ts-label">Co-Location Signals</span>
+        <span class="ts-sev sev-medium">/24</span>
+    `;
+    slot3.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openColocationCard();
+    });
+    bar.appendChild(slot3);
+
+    // ── Slots 4-7: Placeholders ──
     const placeholders = [
-        { icon: "🌐", label: "Topology Risks" },
         { icon: "📡", label: "Relay Patterns" },
         { icon: "🔐", label: "Privacy Leaks" },
         { icon: "⏱️", label: "Timing Attacks" },
@@ -1116,6 +1131,35 @@ function openPeerProfilingCard(stats) {
             header.closest(".tc-section").classList.toggle("open");
         });
     });
+}
+
+function openColocationCard() {
+    const overlay = document.getElementById("threat-card-overlay");
+    const card = document.getElementById("threat-card");
+    const colocGroups = (leaks.colocation || []).sort((a, b) => (b.count || 0) - (a.count || 0));
+
+    card.innerHTML = `
+        <div class="tc-header">
+            <div class="tc-title">📍 Co-Location Signals (/24)</div>
+            <button class="tc-close" id="tc-close-btn">✕</button>
+        </div>
+        <div class="tc-summary">
+            ${colocGroups.length} groups detected · shared IPv4 /24 prefixes are a hosting/co-location signal, not proof of common control.
+        </div>
+        <div style="padding:10px 12px;max-height:70vh;overflow-y:auto;">
+            <div style="font-size:10px;color:#999;line-height:1.5;margin-bottom:10px;">
+                Click a card to highlight the whole group across the dashboard, or click an individual node chip to open its node card.
+            </div>
+            <div class="coloc-list" id="coloc-popup-list">${buildColocationCardsHtml()}</div>
+        </div>
+    `;
+
+    overlay.classList.add("open");
+    document.getElementById("tc-close-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        overlay.classList.remove("open");
+    });
+    wireColocationCardInteractions(card);
 }
 
 // ── Threat Report Card (full overlay) ──
