@@ -1,0 +1,14 @@
+[project]
+name = "gossip-tomography"
+version = "0.1.0"
+description = "Standalone Lightning gossip tomography dashboard and preprocessing tools"
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.0.0",
+    "flask-cors>=5.0.0",
+    "polars>=1.25.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
