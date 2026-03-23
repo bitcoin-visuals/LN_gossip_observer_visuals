@@ -1,12 +1,12 @@
 // ═══════════════════════════════════════════════════════════════
-//  Gossip Tomography — Interactive LN Gossip Propagation Analyzer
+//  LN Gossip Visualizer — Interactive LN Gossip Propagation Analyzer
 //  BTC++ Hackathon 2026
 //
 //  4-quadrant dashboard with cross-highlighting:
 //    Q1  Propagation Replay (radial canvas)
 //    Q2  World Map (Leaflet)
 //    Q3  Fast Relay Heuristics
-//    Q4  Co-Location Signals
+//    Q4  Node Details
 // ═══════════════════════════════════════════════════════════════
 
 const DATA_BASE = "data";
@@ -124,6 +124,7 @@ let peerStates = {};
 let leafletMap = null;
 let mapMarkers = {};          // pubkey → L.circleMarker
 let mapHighlightLayer = null;
+let selectedNodePubkey = null;
 const DEFAULT_MAP_VIEW = {
     center: [25, 0],
     zoom: 2,
@@ -213,7 +214,10 @@ async function loadData() {
     document.getElementById("replay-badge").textContent = messages.length + " replay msgs";
     document.getElementById("map-badge").textContent = mapLocatedCount + " mapped";
     document.getElementById("suspect-badge").textContent = (leaks.first_responders || []).length;
-    document.getElementById("coloc-badge").textContent = (leaks.colocation || []).length + " groups";
+    const nodeDetailsBadge = document.getElementById("node-details-badge");
+    if (nodeDetailsBadge && !selectedNodePubkey) {
+        nodeDetailsBadge.textContent = "Select a node";
+    }
 }
 
 async function fetchJSON(url) {
@@ -302,7 +306,6 @@ function setupUI() {
 
     renderMessageList("all");
     renderSuspects();
-    renderColocation();
     renderAllMapMarkers();
 }
 
@@ -367,45 +370,46 @@ function renderSuspects() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Q4 — CO-LOCATION SIGNALS
+//  CO-LOCATION SIGNALS
 // ═══════════════════════════════════════════════════════════════
 
-function renderColocation() {
-    const container = document.getElementById("coloc-list");
-    container.innerHTML = "";
+function buildColocationCardsHtml() {
     const clList = (leaks.colocation || []).sort((a, b) => (b.count || 0) - (a.count || 0));
-
-    for (const cl of clList) {
+    return clList.map(cl => {
         const peerList = cl.peers || [];
         const pubkeys = peerList.map(p => typeof p === "string" ? p : p.pubkey);
-        const card = document.createElement("div");
-        card.className = "coloc-card";
-        card.dataset.pubkeys = JSON.stringify(pubkeys);
-
         const chipHtml = peerList.map(p => {
             const pk = typeof p === "string" ? p : p.pubkey;
             const alias = typeof p === "object" ? (p.alias || pk.slice(0, 10)) : (peers[pk]?.alias || pk.slice(0, 10));
             return `<span class="chip" data-pubkey="${pk}">${escHtml(alias)}</span>`;
         }).join("");
 
-        card.innerHTML = `
-            <div class="subnet">${cl.prefix || "?"} <span class="count-badge">(${cl.count || pubkeys.length} nodes)</span></div>
-            <div class="peer-chips">${chipHtml}</div>`;
+        return `
+            <div class="coloc-card" data-pubkeys='${JSON.stringify(pubkeys)}'>
+                <div class="subnet">${cl.prefix || "?"} <span class="count-badge">(${cl.count || pubkeys.length} nodes)</span></div>
+                <div class="peer-chips">${chipHtml}</div>
+            </div>`;
+    }).join("");
+}
 
-        // Click card → highlight all peers in group
+function wireColocationCardInteractions(scope = document) {
+    scope.querySelectorAll(".coloc-card").forEach(card => {
+        if (card.dataset.wired === "1") return;
+        card.dataset.wired = "1";
+
         card.addEventListener("click", (e) => {
-            if (e.target.classList.contains("chip")) return; // handled below
+            if (e.target.classList.contains("chip")) return;
+            const pubkeys = JSON.parse(card.dataset.pubkeys || "[]");
             highlightPeers(pubkeys);
         });
-        // Click individual chip → open node card
+
         card.querySelectorAll(".chip").forEach(chip => {
             chip.addEventListener("click", (e) => {
                 e.stopPropagation();
                 openNodeCard(chip.dataset.pubkey);
             });
         });
-        container.appendChild(card);
-    }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -423,6 +427,7 @@ function highlightPeers(pubkeys) {
 
 function clearHighlight() {
     highlightedPeers.clear();
+    selectedNodePubkey = null;
     updateAllHighlights();
 }
 
@@ -452,6 +457,8 @@ function updateAllHighlights() {
     });
     const highlightedColoc = document.querySelector(".coloc-card.highlighted");
     if (highlightedColoc) highlightedColoc.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+    renderNodeDetailsPlaceholder();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -880,9 +887,24 @@ function computeAndRenderThreats() {
     });
     bar.appendChild(slot2);
 
-    // ── Slots 3-7: Placeholders ──
+    // ── Slot 3: Co-location signals popup ──
+    const colocGroups = leaks.colocation || [];
+    const slot3 = document.createElement("div");
+    slot3.className = "threat-slot";
+    slot3.innerHTML = `
+        <span class="ts-icon">📍</span>
+        <span class="ts-count" style="color:#e9c46a">${colocGroups.length}</span>
+        <span class="ts-label">Co-Location Signals</span>
+        <span class="ts-sev sev-medium">/24</span>
+    `;
+    slot3.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openColocationCard();
+    });
+    bar.appendChild(slot3);
+
+    // ── Slots 4-7: Placeholders ──
     const placeholders = [
-        { icon: "🌐", label: "Topology Risks" },
         { icon: "📡", label: "Relay Patterns" },
         { icon: "🔐", label: "Privacy Leaks" },
         { icon: "⏱️", label: "Timing Attacks" },
@@ -1116,6 +1138,35 @@ function openPeerProfilingCard(stats) {
             header.closest(".tc-section").classList.toggle("open");
         });
     });
+}
+
+function openColocationCard() {
+    const overlay = document.getElementById("threat-card-overlay");
+    const card = document.getElementById("threat-card");
+    const colocGroups = (leaks.colocation || []).sort((a, b) => (b.count || 0) - (a.count || 0));
+
+    card.innerHTML = `
+        <div class="tc-header">
+            <div class="tc-title">📍 Co-Location Signals (/24)</div>
+            <button class="tc-close" id="tc-close-btn">✕</button>
+        </div>
+        <div class="tc-summary">
+            ${colocGroups.length} groups detected · shared IPv4 /24 prefixes are a hosting/co-location signal, not proof of common control.
+        </div>
+        <div style="padding:10px 12px;max-height:70vh;overflow-y:auto;">
+            <div style="font-size:10px;color:#999;line-height:1.5;margin-bottom:10px;">
+                Click a card to highlight the whole group across the dashboard, or click an individual node chip to open its node card.
+            </div>
+            <div class="coloc-list" id="coloc-popup-list">${buildColocationCardsHtml()}</div>
+        </div>
+    `;
+
+    overlay.classList.add("open");
+    document.getElementById("tc-close-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        overlay.classList.remove("open");
+    });
+    wireColocationCardInteractions(card);
 }
 
 // ── Threat Report Card (full overlay) ──
@@ -1357,6 +1408,7 @@ function openThreatCard(threatData, totalFp) {
 // ═══════════════════════════════════════════════════════════════
 
 function openNodeCard(pubkey) {
+    selectedNodePubkey = pubkey;
     const peer = peers[pubkey] || {};
     const fp = fpByPubkey[pubkey];
     const isSuspect = (leaks.first_responders || []).some(fr => (fr.pubkey || "") === pubkey);
@@ -1368,8 +1420,8 @@ function openNodeCard(pubkey) {
         (cl.peers || []).some(p => (typeof p === "string" ? p : p.pubkey) === pubkey)
     );
 
-    const overlay = document.getElementById("node-card-overlay");
-    const card = document.getElementById("node-card");
+    const card = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
 
     // ── Build card HTML ──
     let html = `
@@ -1505,8 +1557,15 @@ function openNodeCard(pubkey) {
     </div>`;
     }
 
+    card.style.display = "block";
+    card.style.padding = "0";
+    card.style.alignItems = "initial";
+    card.style.justifyContent = "initial";
+    card.style.color = "inherit";
+    card.style.fontSize = "inherit";
+    card.style.textAlign = "initial";
     card.innerHTML = html;
-    overlay.classList.add("open");
+    if (badge) badge.textContent = peer.alias || pubkey.slice(0, 10) + "…";
 
     // Wire close button
     document.getElementById("nc-close-btn").addEventListener("click", closeNodeCard);
@@ -1524,14 +1583,27 @@ function openNodeCard(pubkey) {
 }
 
 function closeNodeCard() {
-    document.getElementById("node-card-overlay").classList.remove("open");
+    selectedNodePubkey = null;
+    renderNodeDetailsPlaceholder();
 }
 
-// Close card on overlay background click or Escape
-document.addEventListener("click", (e) => {
-    const overlay = document.getElementById("node-card-overlay");
-    if (overlay && e.target === overlay) closeNodeCard();
-});
+function renderNodeDetailsPlaceholder() {
+    const card = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
+    if (!card) return;
+    if (selectedNodePubkey && peers[selectedNodePubkey]) return;
+
+    if (badge) badge.textContent = "Select a node";
+    card.style.display = "flex";
+    card.style.alignItems = "center";
+    card.style.justifyContent = "center";
+    card.style.padding = "24px";
+    card.style.color = "#666";
+    card.style.fontSize = "12px";
+    card.style.textAlign = "center";
+    card.innerHTML = "Select a node";
+}
+
 document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeNodeCard();
 });

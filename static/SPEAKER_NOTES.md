@@ -1,4 +1,4 @@
-# Gossip Tomography — Speaker Notes
+# LN Gossip Visualizer — Speaker Notes
 **BTC++ Hackathon 2026**
 
 Press **S** during the presentation to open Reveal.js speaker view (shows notes + next slide).
@@ -6,7 +6,7 @@ Press **S** during the presentation to open Reveal.js speaker view (shows notes 
 ---
 
 ## Slide 1: Title
-Gossip Tomography — we analyze Lightning Network gossip propagation to detect privacy leaks and surveillance risks. Built for the BTC++ Hackathon 2026.
+LN Gossip Visualizer — we analyze Lightning Network gossip propagation to detect privacy leaks and surveillance risks. Built for the BTC++ Hackathon 2026.
 
 ---
 
@@ -41,4 +41,4 @@ Open the dashboard, show the propagation replay, click a message and play the wa
 ---
 
 ## Slide 8: Title (closing)
-Thanks. Gossip Tomography — questions?
+Thanks. LN Gossip Visualizer — questions?
