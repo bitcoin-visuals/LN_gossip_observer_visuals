@@ -5,7 +5,7 @@
 //  4-quadrant dashboard with cross-highlighting:
 //    Q1  Propagation Replay (radial canvas)
 //    Q2  World Map (Leaflet)
-//    Q3  Fast Relay Heuristics
+//    Q3  Future Features / Placeholder
 //    Q4  Node Details
 // ═══════════════════════════════════════════════════════════════
 
@@ -213,7 +213,7 @@ async function loadData() {
     // Badges
     document.getElementById("replay-badge").textContent = messages.length + " replay msgs";
     document.getElementById("map-badge").textContent = mapLocatedCount + " mapped";
-    document.getElementById("suspect-badge").textContent = (leaks.first_responders || []).length;
+    document.getElementById("suspect-badge").textContent = "reserved";
     const nodeDetailsBadge = document.getElementById("node-details-badge");
     if (nodeDetailsBadge && !selectedNodePubkey) {
         nodeDetailsBadge.textContent = "Select a node";
@@ -305,7 +305,6 @@ function setupUI() {
     canvas.addEventListener("click", handleCanvasClick);
 
     renderMessageList("all");
-    renderSuspects();
     renderAllMapMarkers();
 }
 
@@ -335,23 +334,19 @@ function renderMessageList(filterType) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Q3 — SUSPECTS
+//  FAST RELAY HEURISTICS
 // ═══════════════════════════════════════════════════════════════
 
-function renderSuspects() {
-    const container = document.getElementById("suspect-list");
-    container.innerHTML = "";
+function buildSuspectsHtml() {
     const frList = (leaks.first_responders || [])
         .sort((a, b) => (a.avg_arrival_pct || 0) - (b.avg_arrival_pct || 0));
 
-    for (const fr of frList) {
+    return frList.map(fr => {
         const pk = fr.pubkey || "";
-        const card = document.createElement("div");
-        card.className = "suspect-card";
-        card.dataset.pubkey = pk;
         const pct = (fr.top5_pct || 0).toFixed(0);
         const isTor = fr.is_tor;
-        card.innerHTML = `
+        return `
+        <div class="suspect-card" data-pubkey="${pk}">
             <div class="alias">${escHtml(fr.alias || pk.slice(0, 16) + "…")}</div>
             <div class="meta">
                 <span class="tag ${isTor ? "tag-tor" : "tag-clearnet"}">${isTor ? "🧅 TOR" : "🌐 CLEARNET"}</span>
@@ -361,12 +356,20 @@ function renderSuspects() {
             <div class="score-bar">
                 <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
                 <span class="bar-label">top-5: ${pct}%</span>
-            </div>`;
+            </div>
+        </div>`;
+    }).join("");
+}
+
+function wireSuspectCardInteractions(scope = document) {
+    scope.querySelectorAll(".suspect-card").forEach(card => {
+        if (card.dataset.wired === "1") return;
+        card.dataset.wired = "1";
+        const pk = card.dataset.pubkey;
         card.addEventListener("click", () => openNodeCard(pk));
         card.addEventListener("mouseenter", () => showPeerTooltip(pk, card));
         card.addEventListener("mouseleave", () => hideTooltip());
-        container.appendChild(card);
-    }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -903,9 +906,24 @@ function computeAndRenderThreats() {
     });
     bar.appendChild(slot3);
 
-    // ── Slots 4-7: Placeholders ──
+    // ── Slot 4: Fast relay heuristics popup ──
+    const fastRelayers = leaks.first_responders || [];
+    const slot4 = document.createElement("div");
+    slot4.className = "threat-slot";
+    slot4.innerHTML = `
+        <span class="ts-icon">🔍</span>
+        <span class="ts-count" style="color:#e63946">${fastRelayers.length}</span>
+        <span class="ts-label">Fast Relay Heuristics</span>
+        <span class="ts-sev sev-high">timing</span>
+    `;
+    slot4.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openFastRelayCard();
+    });
+    bar.appendChild(slot4);
+
+    // ── Slots 5-7: Placeholders ──
     const placeholders = [
-        { icon: "📡", label: "Relay Patterns" },
         { icon: "🔐", label: "Privacy Leaks" },
         { icon: "⏱️", label: "Timing Attacks" },
         { icon: "🗺️", label: "Geo Clustering" },
@@ -1167,6 +1185,36 @@ function openColocationCard() {
         overlay.classList.remove("open");
     });
     wireColocationCardInteractions(card);
+}
+
+function openFastRelayCard() {
+    const overlay = document.getElementById("threat-card-overlay");
+    const card = document.getElementById("threat-card");
+    const frList = (leaks.first_responders || [])
+        .sort((a, b) => (a.avg_arrival_pct || 0) - (b.avg_arrival_pct || 0));
+
+    card.innerHTML = `
+        <div class="tc-header">
+            <div class="tc-title">🔍 Fast Relay Heuristics</div>
+            <button class="tc-close" id="tc-close-btn">✕</button>
+        </div>
+        <div class="tc-summary">
+            ${frList.length} peers flagged by fixed timing heuristics. These are strong relay-timing signals, not proof of surveillance.
+        </div>
+        <div style="padding:10px 12px;max-height:70vh;overflow-y:auto;">
+            <div style="font-size:10px;color:#999;line-height:1.5;margin-bottom:10px;">
+                Click a peer card to open its node details. Hover a card to inspect key relay metrics quickly.
+            </div>
+            <div class="suspect-list" id="suspect-popup-list">${buildSuspectsHtml()}</div>
+        </div>
+    `;
+
+    overlay.classList.add("open");
+    document.getElementById("tc-close-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        overlay.classList.remove("open");
+    });
+    wireSuspectCardInteractions(card);
 }
 
 // ── Threat Report Card (full overlay) ──
