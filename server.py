@@ -1,4 +1,4 @@
-"""Gossip Tomography — Flask server.
+"""LN Gossip Visualizer — Flask server.
 
 Serves the static frontend and preprocessed JSON data.
 """
@@ -25,6 +25,6 @@ def static_files(path):
 
 
 if __name__ == "__main__":
-    print("\n  🔬 Gossip Tomography")
+    print("\n  🔬 LN Gossip Visualizer")
     print("  http://localhost:5001\n")
     app.run(host="0.0.0.0", port=5001, debug=False)

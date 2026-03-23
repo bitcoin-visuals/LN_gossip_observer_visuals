@@ -1,4 +1,4 @@
-# Gossip Tomography
+# LN Gossip Visualizer
 
 Standalone dashboard and preprocessing pipeline for Lightning Network gossip replay analysis.
 

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-//  Gossip Tomography — Interactive LN Gossip Propagation Analyzer
+//  LN Gossip Visualizer — Interactive LN Gossip Propagation Analyzer
 //  BTC++ Hackathon 2026
 //
 //  4-quadrant dashboard with cross-highlighting:

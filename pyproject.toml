@@ -1,7 +1,7 @@
 [project]
-name = "gossip-tomography"
+name = "ln-gossip-visualizer"
 version = "0.1.0"
-description = "Standalone Lightning gossip tomography dashboard and preprocessing tools"
+description = "Standalone Lightning gossip visualization dashboard and preprocessing tools"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0.0",

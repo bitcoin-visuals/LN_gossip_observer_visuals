@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gossip Tomography — Data Preprocessor
+LN Gossip Visualizer — Data Preprocessor
 
 Reads the exported parquet data + node list, computes:
 1. Per-peer "first responder" scores (how early they typically relay gossip)
@@ -425,7 +425,7 @@ def main():
     validate_inputs()
 
     print("=" * 60)
-    print("  GOSSIP TOMOGRAPHY — Data Preprocessor")
+    print("  LN GOSSIP VISUALIZER — Data Preprocessor")
     print("=" * 60)
 
     # 1. Load raw data
