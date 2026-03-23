@@ -32,3 +32,6 @@ infra/ansible/vault.yml
 infra/ansible/inventory/hosts.ini*
 infra/ansible/binaries/# Large data files already on exported_data branch
 data/mainnet/gossip_archives/
+
+# Obsolete heavy generated artifacts not used by the current static prototype
+static/data/message_participants.json
