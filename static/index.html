@@ -318,6 +318,43 @@
             padding: 4px 6px;
             border-bottom: 1px solid #1a1a2e;
         }
+        .msg-toolbar {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 6px;
+            border-bottom: 1px solid #1a1a2e;
+            background: #0d0d14;
+        }
+        .msg-search {
+            width: 100%;
+            padding: 5px 6px;
+            font-size: 9px;
+            background: #12121e;
+            border: 1px solid #2a2a3e;
+            color: #ddd;
+            border-radius: 3px;
+            font-family: inherit;
+        }
+        .msg-meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 6px;
+            font-size: 8px;
+            color: #666;
+        }
+        .msg-load-more {
+            padding: 3px 8px;
+            font-size: 8px;
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            color: #aaa;
+            cursor: pointer;
+            border-radius: 3px;
+            font-family: inherit;
+        }
+        .msg-load-more:hover { border-color: #ff6b3560; color: #ff6b35; }
         .msg-filter button {
             flex: 1;
             padding: 3px 2px;
@@ -421,8 +458,130 @@
         .leaflet-container { background: #0a0a0f !important; }
 
         /* ── Q3: Fast Relay Heuristics (bottom-left) ── */
-        .q-suspects .quad-header h2 { color: #e63946; }
-        .q-suspects .badge { background: #e6394620; color: #e63946; }
+        .q-suspects .quad-header h2 { color: #e9c46a; }
+        .q-suspects .badge { background: #e9c46a20; color: #e9c46a; }
+
+        .channel-panel {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .channel-summary {
+            padding: 10px 12px 8px;
+            border-bottom: 1px solid #161627;
+            font-size: 10px;
+            color: #9aa0b5;
+            line-height: 1.5;
+        }
+        .channel-list {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 10px 12px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .channel-card {
+            border: 1px solid #1d1d31;
+            border-radius: 10px;
+            padding: 10px;
+            background: rgba(255,255,255,0.015);
+            transition: border-color .16s ease, transform .16s ease, background .16s ease;
+        }
+        .channel-card.highlighted {
+            border-color: #ff6b35;
+            background: rgba(255,107,53,0.08);
+        }
+        .channel-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .channel-scid {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            color: #f1f3f8;
+            word-break: break-all;
+        }
+        .channel-rank {
+            font-size: 10px;
+            color: #e9c46a;
+            font-weight: 700;
+        }
+        .channel-meta,
+        .channel-origins {
+            font-size: 10px;
+            color: #8d93a8;
+            line-height: 1.5;
+        }
+        .channel-bars {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .channel-bar-track {
+            flex: 1;
+            height: 6px;
+            border-radius: 999px;
+            background: #181826;
+            overflow: hidden;
+        }
+        .channel-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e9c46a, #ff6b35);
+            border-radius: inherit;
+        }
+        .channel-bar-label {
+            font-size: 10px;
+            color: #f1f3f8;
+            white-space: nowrap;
+        }
+        .channel-subsection-label {
+            margin-top: 8px;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #6f768d;
+        }
+        .channel-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .channel-tags.node-tags {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid #1a1a2e;
+        }
+        .channel-tag {
+            font-size: 9px;
+            border-radius: 999px;
+            border: 1px solid #2a2a3d;
+            padding: 2px 7px;
+            color: #c7cad6;
+            background: #11111a;
+        }
+        .channel-tag.node-tag {
+            border-color: #ff6b3533;
+            color: #ffb08a;
+            background: rgba(255,107,53,0.08);
+        }
+        .channel-empty {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            color: #666;
+            font-size: 12px;
+            text-align: center;
+        }
         .suspect-list {
             height: 100%;
             overflow-y: auto;
@@ -702,11 +861,10 @@
 <div class="header">
     <h1>LN GOSSIP VISUALIZER <span>// LN Gossip Propagation Analyzer</span></h1>
     <div class="stats">
+        <span>↳ Elements In Scope</span>
         <span><span class="val" id="stat-peers">—</span> peers</span>
-        <span><span class="val" id="stat-msgs">—</span> msgs in archive</span>
-        <span><span class="val" id="stat-ips">—</span> map-located</span>
-        <span><span class="val" id="stat-suspects">—</span> fast relayers</span>
-        <span><span class="val" id="stat-coloc">—</span> co-location signals</span>
+        <span><span class="val" id="stat-msgs">—</span> channel msgs</span>
+        <span><span class="val" id="stat-ips">—</span> mapped peers</span>
     </div>
 </div>
 
@@ -720,6 +878,13 @@
         <div class="quad-body">
             <div class="replay-layout">
                 <div class="replay-sidebar">
+                    <div class="msg-toolbar">
+                        <input class="msg-search" id="msg-search" type="text" placeholder="Search hash / scid / origin…">
+                        <div class="msg-meta-row">
+                            <span id="msg-results-meta">0 shown</span>
+                            <button class="msg-load-more" id="msg-load-more">Load more</button>
+                        </div>
+                    </div>
                     <div class="msg-filter">
                         <button class="active" data-type="all">All</button>
                         <button data-type="channel_announcement">CA</button>
@@ -756,14 +921,14 @@
         </div>
     </div>
 
-    <!-- Q3: Reserved for future features (bottom-left) -->
+    <!-- Q3: Channels view (bottom-left) -->
     <div class="quad q-suspects">
         <div class="quad-header">
-            <h2>✨ Coming Features</h2>
-            <span class="badge" id="suspect-badge">reserved</span>
+            <h2>🔗 Channels View</h2>
+            <span class="badge" id="suspect-badge">loading…</span>
         </div>
-        <div class="quad-body" style="display:flex;align-items:center;justify-content:center;padding:24px;color:#666;font-size:12px;text-align:center;">
-            This square is now free for upcoming features. Fast relay heuristics moved to the fourth button in the bottom bar.
+        <div class="quad-body" id="channels-panel-root" style="padding:0;overflow:hidden;">
+            <div class="channel-empty">Loading channels…</div>
         </div>
     </div>
 

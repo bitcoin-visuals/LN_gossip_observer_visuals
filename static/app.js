@@ -20,6 +20,45 @@ let leaks = {};
 let summary = {};
 let fingerprints = {};        // raw fingerprints.json
 let fpByPubkey = {};          // pubkey → { features_hex, feature_names, group_size }
+let channels = [];
+let nodeChannels = {};
+let messageScope = { global: {}, nodes: {} };
+let channelScopeSummary = { global: {}, nodes: {} };
+let messageCatalog = [];
+let replayRenderLimit = 100;
+let replayFilterType = "all";
+let replaySearchText = "";
+let replaySelectionToken = 0;
+
+const replayWavefrontCache = new Map();
+
+function getGlobalVisibleChannels() {
+    return Array.isArray(channels) ? channels.slice(0, 30) : [];
+}
+
+function getActiveMessageUniverse(active = getActiveChannelList(), visibleChannelItems = null) {
+    if (!selectedNodePubkey) {
+        return {
+            mode: "global",
+            messageCount: channelScopeSummary.global?.message_count || 11317,
+            peerCount: channelScopeSummary.global?.peer_count || messageScope.global?.peer_count || summary.global_scoped_peers || Object.keys(peers).length || 0,
+            mappedPeerCount: channelScopeSummary.global?.mapped_peer_count || messageScope.global?.mapped_peer_count || Object.values(peers).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)).length || 0,
+            channelCount: getGlobalVisibleChannels().length,
+        };
+    }
+
+    const nodeScope = channelScopeSummary.nodes?.[selectedNodePubkey] || messageScope.nodes?.[selectedNodePubkey] || {};
+    const nodeItems = Array.isArray(visibleChannelItems) ? visibleChannelItems : (Array.isArray(active.items) ? active.items : []);
+    const visibleNodeChannelCount = nodeItems.length;
+
+    return {
+        mode: "node",
+        messageCount: nodeScope.message_count || 0,
+        peerCount: nodeScope.peer_count || 1,
+        mappedPeerCount: nodeScope.mapped_peer_count || 0,
+        channelCount: visibleNodeChannelCount,
+    };
+}
 
 // ─── Threat indicator definitions ───────────────────────────────
 // Each entry: feature to check, whether presence or absence is the threat,
@@ -150,8 +189,8 @@ window.addEventListener("load", async () => {
         leafletMap?.invalidateSize();
     });
 
-    // Auto-select first message
-    if (messages.length > 0) selectMessage(messages[0]);
+    // Auto-select first scoped message from the catalog browser
+    if (messageCatalog.length > 0) selectMessage(messageCatalog[0]);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -159,7 +198,7 @@ window.addEventListener("load", async () => {
 // ═══════════════════════════════════════════════════════════════
 
 async function loadData() {
-    const [p, w, m, c, l, s, fp] = await Promise.all([
+    const [p, w, m, c, l, s, fp, ch, nch, ms, css, mc] = await Promise.all([
         fetchJSON(`${DATA_BASE}/peers.json`),
         fetchJSON(`${DATA_BASE}/wavefronts.json`),
         fetchJSON(`${DATA_BASE}/messages.json`),
@@ -167,8 +206,18 @@ async function loadData() {
         fetchJSON(`${DATA_BASE}/leaks.json`),
         fetchJSON(`${DATA_BASE}/summary.json`),
         fetchJSON(`${DATA_BASE}/fingerprints.json`),
+        fetchJSON(`${DATA_BASE}/channels.json`),
+        fetchJSON(`${DATA_BASE}/node_channels.json`),
+        fetchJSON(`${DATA_BASE}/message_scope.json`),
+        fetchJSON(`${DATA_BASE}/channel_scope_summary.json`),
+        fetchJSON(`${DATA_BASE}/message_catalog.json`),
     ]);
     peers = p; wavefronts = w; communities = c; leaks = l; summary = s; fingerprints = fp;
+    channels = Array.isArray(ch) ? ch : [];
+    nodeChannels = nch && typeof nch === "object" ? nch : {};
+    messageScope = ms && typeof ms === "object" ? ms : { global: {}, nodes: {} };
+    channelScopeSummary = css && typeof css === "object" ? css : { global: {}, nodes: {} };
+    messageCatalog = Array.isArray(mc) ? mc : [];
 
     // Build pubkey → fingerprint lookup
     fpByPubkey = {};
@@ -202,22 +251,31 @@ async function loadData() {
         messages = m;
     }
 
+    const replayHashes = new Set(messages.map(msg => String(msg.hash)));
+    messageCatalog = messageCatalog.map(item => {
+        const replayMeta = replayHashes.has(String(item.hash)) ? (wavefronts[item.hash] || wavefronts[String(item.hash)] || {}) : null;
+        return {
+            ...item,
+            replay_available: replayHashes.has(String(item.hash)),
+            peer_count: replayMeta?.total_peers || item.timing_rows || 0,
+            time_spread_ms: replayMeta?.spread_ms || 0,
+        };
+    });
+
     // Header stats
     const mapLocatedCount = Object.values(peers).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)).length;
-    document.getElementById("stat-peers").textContent = summary.total_peers || Object.keys(peers).length;
-    document.getElementById("stat-msgs").textContent = summary.total_messages?.toLocaleString() || "—";
-    document.getElementById("stat-ips").textContent = mapLocatedCount.toLocaleString();
-    document.getElementById("stat-suspects").textContent = (leaks.first_responders || []).length;
-    document.getElementById("stat-coloc").textContent = (leaks.colocation || []).length;
-
+    document.getElementById("stat-peers").textContent = (messageScope.global.peer_count || summary.global_scoped_peers || summary.total_peers || Object.keys(peers).length).toLocaleString();
+    document.getElementById("stat-msgs").textContent = (messageScope.global.message_count || channelScopeSummary.global.message_count || summary.global_scoped_messages || 0).toLocaleString();
+    document.getElementById("stat-ips").textContent = (messageScope.global.mapped_peer_count || mapLocatedCount).toLocaleString();
     // Badges
-    document.getElementById("replay-badge").textContent = messages.length + " replay msgs";
+    document.getElementById("replay-badge").textContent = `${messageCatalog.length.toLocaleString()} scoped msgs`;
     document.getElementById("map-badge").textContent = mapLocatedCount + " mapped";
-    document.getElementById("suspect-badge").textContent = "reserved";
+    document.getElementById("suspect-badge").textContent = `${(summary.total_channels_indexed || channels.length || 0).toLocaleString()} tracked`;
     const nodeDetailsBadge = document.getElementById("node-details-badge");
     if (nodeDetailsBadge && !selectedNodePubkey) {
         nodeDetailsBadge.textContent = "Select a node";
     }
+    renderChannelsPanel();
 }
 
 async function fetchJSON(url) {
@@ -226,6 +284,39 @@ async function fetchJSON(url) {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return await r.json();
     } catch (e) { console.warn(`Failed: ${url}`, e); return {}; }
+}
+
+async function fetchJSONOrNull(url) {
+    try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return await r.json();
+    } catch (e) {
+        console.warn(`Optional fetch failed: ${url}`, e);
+        return null;
+    }
+}
+
+function getCachedWavefront(msgHash) {
+    const key = String(msgHash);
+    return replayWavefrontCache.get(key) || wavefronts[key] || wavefronts[msgHash] || null;
+}
+
+async function ensureWavefrontLoaded(msgHash) {
+    const key = String(msgHash);
+    const cached = getCachedWavefront(key);
+    if (cached) {
+        replayWavefrontCache.set(key, cached);
+        return cached;
+    }
+
+    const shard = await fetchJSONOrNull(`${DATA_BASE}/wavefronts/${key}.json`);
+    if (shard) {
+        replayWavefrontCache.set(key, shard);
+        return shard;
+    }
+
+    return null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -304,6 +395,22 @@ function setupUI() {
     canvas.addEventListener("mouseleave", () => hideTooltip());
     canvas.addEventListener("click", handleCanvasClick);
 
+    const msgSearch = document.getElementById("msg-search");
+    const loadMoreBtn = document.getElementById("msg-load-more");
+    if (msgSearch) {
+        msgSearch.addEventListener("input", (e) => {
+            replaySearchText = (e.target.value || "").trim().toLowerCase();
+            replayRenderLimit = 100;
+            renderMessageList(replayFilterType);
+        });
+    }
+    if (loadMoreBtn) {
+        loadMoreBtn.addEventListener("click", () => {
+            replayRenderLimit += 100;
+            renderMessageList(replayFilterType);
+        });
+    }
+
     renderMessageList("all");
     renderAllMapMarkers();
 }
@@ -314,11 +421,27 @@ function setupUI() {
 
 function renderMessageList(filterType) {
     const list = document.getElementById("msg-list");
+    const resultsMeta = document.getElementById("msg-results-meta");
+    const loadMoreBtn = document.getElementById("msg-load-more");
     list.innerHTML = "";
-    const filtered = filterType === "all"
-        ? messages
-        : messages.filter(m => m.type === filterType);
-    const sorted = [...filtered].sort((a, b) => b.peer_count - a.peer_count).slice(0, 100);
+    replayFilterType = filterType;
+    const filtered = (filterType === "all" ? messageCatalog : messageCatalog.filter(m => m.type === filterType))
+        .filter(m => {
+            if (!replaySearchText) return true;
+            return [m.hash, m.scid, m.orig_node, m.type]
+                .filter(Boolean)
+                .some(value => String(value).toLowerCase().includes(replaySearchText));
+        });
+    const sorted = [...filtered]
+        .sort((a, b) => (b.activity_score || 0) - (a.activity_score || 0))
+        .slice(0, replayRenderLimit);
+
+    if (resultsMeta) {
+        resultsMeta.textContent = `${sorted.length.toLocaleString()} / ${filtered.length.toLocaleString()} shown`;
+    }
+    if (loadMoreBtn) {
+        loadMoreBtn.style.display = filtered.length > sorted.length ? "inline-block" : "none";
+    }
 
     for (const msg of sorted) {
         const el = document.createElement("div");
@@ -327,7 +450,7 @@ function renderMessageList(filterType) {
             : msg.type === "node_announcement" ? "node_ann" : "chan_upd";
         el.innerHTML = `
             <span class="type-badge type-${ts}">${ts}</span>
-            <span class="peers-count">${msg.peer_count}p · ${(msg.time_spread_ms / 1000).toFixed(1)}s</span>`;
+            <span class="peers-count">${msg.replay_available ? `${msg.peer_count}p · ${(msg.time_spread_ms / 1000).toFixed(1)}s` : `${(msg.timing_rows || 0).toLocaleString()} relays`}</span>`;
         el.addEventListener("click", () => selectMessage(msg));
         list.appendChild(el);
     }
@@ -462,6 +585,144 @@ function updateAllHighlights() {
     if (highlightedColoc) highlightedColoc.scrollIntoView({ block: "nearest", behavior: "smooth" });
 
     renderNodeDetailsPlaceholder();
+    renderChannelsPanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Q3 — CHANNELS VIEW
+// ═══════════════════════════════════════════════════════════════
+
+function getActiveChannelList() {
+    if (selectedNodePubkey && nodeChannels[selectedNodePubkey]?.length) {
+        return {
+            title: peers[selectedNodePubkey]?.alias || selectedNodePubkey.slice(0, 12) + "…",
+            mode: "node",
+            items: nodeChannels[selectedNodePubkey],
+        };
+    }
+    return {
+        title: "Network-wide",
+        mode: "global",
+        items: channels,
+    };
+}
+
+function buildChannelCardHtml(item, index, maxTraffic) {
+    const nodeScoped = Object.prototype.hasOwnProperty.call(item || {}, "relay_messages") || Object.prototype.hasOwnProperty.call(item || {}, "origin_messages");
+    const trafficValue = nodeScoped
+        ? (item.relay_messages || item.origin_messages || 0)
+        : (item.timing_rows || item.message_count || 0);
+    const pct = maxTraffic > 0 ? Math.max(4, (trafficValue / maxTraffic) * 100) : 4;
+    const origins = (item.origin_aliases || []).slice(0, 3);
+    const assoc = item.association === "origin+relay"
+        ? "node: origin + relay"
+        : item.association === "origin"
+            ? "node: origin"
+            : item.association === "relay"
+                ? "node: relay"
+                : null;
+        const channelMeta = `${(item.message_count || 0).toLocaleString()} channel msgs · ${((((item.total_bytes || 0) / 1024) || 0).toFixed(1))} channel KB`;
+    const nodeTags = [
+            assoc ? `<span class="channel-tag node-tag">${assoc}</span>` : "",
+            item.origin_messages ? `<span class="channel-tag node-tag">node origin msgs ${item.origin_messages.toLocaleString()}</span>` : "",
+            item.relay_messages ? `<span class="channel-tag node-tag">node relay msgs ${item.relay_messages.toLocaleString()}</span>` : "",
+        ].filter(Boolean).join("");
+    const nodeDetailsBlock = nodeScoped
+        ? `
+                <div class="channel-subsection-label">Selected node activity</div>
+                <div class="channel-bars">
+                    <div class="channel-bar-track"><div class="channel-bar-fill" style="width:${pct}%"></div></div>
+                    <span class="channel-bar-label">${(item.relay_messages || 0).toLocaleString()} node relays</span>
+                </div>
+                <div class="channel-tags node-tags">${nodeTags || '<span class="channel-tag node-tag">node activity in scope</span>'}</div>
+            `
+        : `
+                <div class="channel-bars">
+                    <div class="channel-bar-track"><div class="channel-bar-fill" style="width:${pct}%"></div></div>
+                    <span class="channel-bar-label">${(item.timing_rows || 0).toLocaleString()} channel relays</span>
+                </div>
+            `;
+
+    return `
+    <div class="channel-card${highlightedPeers.size && selectedNodePubkey && nodeChannels[selectedNodePubkey]?.some(ch => ch.scid === item.scid) ? " highlighted" : ""}" data-scid="${item.scid}">
+            <div class="channel-card-header">
+                <div class="channel-scid">${escHtml(item.scid)}</div>
+                <div class="channel-rank">#${index + 1}</div>
+            </div>
+            <div class="channel-meta">
+                    <strong>${channelMeta}</strong>
+            </div>
+            ${origins.length ? `<div class="channel-origins">Origins: ${origins.map(escHtml).join(", ")}</div>` : ""}
+                <div class="channel-tags">
+                    <span class="channel-tag">channel CA ${(item.channel_announcement_count || 0).toLocaleString()}</span>
+                    <span class="channel-tag">channel NA ${(item.node_announcement_count || 0).toLocaleString()}</span>
+                    <span class="channel-tag">channel CU ${(item.channel_update_count || 0).toLocaleString()}</span>
+                </div>
+                ${nodeDetailsBlock}
+        </div>
+    `;
+}
+
+function renderChannelsPanel() {
+    const root = document.getElementById("channels-panel-root");
+    const badge = document.getElementById("suspect-badge");
+    if (!root || !badge) return;
+
+    const active = getActiveChannelList();
+    const availableItems = Array.isArray(active.items) ? active.items : [];
+    const displayLimit = active.mode === "node" ? availableItems.length : 30;
+    let items = availableItems.slice(0, displayLimit);
+
+    if (active.mode === "node") {
+        items = items.filter(item => item && item.scid);
+    }
+
+    const isTruncated = availableItems.length > items.length;
+
+    if (!items.length) {
+        badge.textContent = selectedNodePubkey ? "0 linked" : `${(summary.total_channels_indexed || channels.length || 0).toLocaleString()} tracked`;
+        root.innerHTML = `<div class="channel-empty">${selectedNodePubkey ? "No channel activity indexed yet for this node." : "No channel data loaded."}</div>`;
+        return;
+    }
+
+    const maxTraffic = Math.max(
+        ...items.map(item => selectedNodePubkey ? (item.relay_messages || item.origin_messages || 0) : (item.timing_rows || item.message_count || 0)),
+        1,
+    );
+    badge.textContent = selectedNodePubkey
+        ? `${items.length.toLocaleString()} linked`
+        : `${items.length.toLocaleString()} shown`;
+    root.innerHTML = `
+        <div class="channel-panel">
+            <div class="channel-summary">
+                ${active.mode === "node"
+                    ? `<strong>${escHtml(active.title)}</strong> — showing ${items.length.toLocaleString()} node-associated channels whose messages intersect with the current global visible channel universe. Top metadata and channel tags are channel-wide aggregates; the orange bar and lower tags are filtered to the selected node.`
+                    : `<strong>${escHtml(active.title)}</strong> — showing the top ${items.length.toLocaleString()} channels ranked by observed relay footprint, then message count, then gossip payload size.${isTruncated ? ` (${availableItems.length.toLocaleString()} tracked total)` : ""}`}
+            </div>
+            <div class="channel-list">
+                ${items.map((item, index) => buildChannelCardHtml(item, index, maxTraffic)).join("")}
+            </div>
+        </div>
+    `;
+
+    updateHeaderStats(active, items);
+}
+
+function updateHeaderStats(active = getActiveChannelList(), visibleChannelItems = null) {
+    const statPeers = document.getElementById("stat-peers");
+    const statMsgs = document.getElementById("stat-msgs");
+    const statIps = document.getElementById("stat-ips");
+    if (!statPeers || !statMsgs || !statIps) return;
+
+    const universe = getActiveMessageUniverse(active, visibleChannelItems);
+
+    const scopedMappedCount = universe.mappedPeerCount;
+    const scopedMessageCount = universe.messageCount;
+    const scopedPeerCount = universe.peerCount;
+
+    statPeers.textContent = scopedPeerCount.toLocaleString();
+    statMsgs.textContent = scopedMessageCount.toLocaleString();
+    statIps.textContent = scopedMappedCount.toLocaleString();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -486,7 +747,7 @@ function initMap() {
 function renderAllMapMarkers() {
     if (!leafletMap) return;
     for (const [pk, peer] of Object.entries(peers)) {
-        if (!peer.lat || !peer.lon) continue;
+        if (!Number.isFinite(peer.lat) || !Number.isFinite(peer.lon)) continue;
         const color = getCommunityColor(peer.community);
         const marker = L.circleMarker([peer.lat, peer.lon], {
             radius: 4,
@@ -530,14 +791,14 @@ function updateMapHighlights() {
     if (highlightedPeers.size === 1) {
         const pk = [...highlightedPeers][0];
         const peer = peers[pk];
-        if (peer?.lat && peer?.lon) {
+        if (Number.isFinite(peer?.lat) && Number.isFinite(peer?.lon)) {
             leafletMap.flyTo([peer.lat, peer.lon], 5, { duration: 0.5 });
         }
     } else if (highlightedPeers.size > 1) {
         // Fit bounds to all highlighted peers with coords
         const coords = [...highlightedPeers]
             .map(pk => peers[pk])
-            .filter(p => p?.lat && p?.lon)
+            .filter(p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon))
             .map(p => [p.lat, p.lon]);
         if (coords.length > 1) {
             leafletMap.flyToBounds(L.latLngBounds(coords).pad(0.3), { duration: 0.5 });
@@ -574,9 +835,11 @@ function updateMapForWavefront() {
 //  MESSAGE SELECTION & ANIMATION
 // ═══════════════════════════════════════════════════════════════
 
-function selectMessage(msg) {
+async function selectMessage(msg) {
+    const selectionToken = ++replaySelectionToken;
     currentMsg = msg;
-    const wfData = wavefronts[msg.hash] || wavefronts[String(msg.hash)] || {};
+    const wfData = await ensureWavefrontLoaded(msg.hash);
+    if (selectionToken !== replaySelectionToken) return;
     currentWavefront = Array.isArray(wfData) ? wfData : (wfData.arrivals || []);
 
     // Init peer states
@@ -594,8 +857,16 @@ function selectMessage(msg) {
         // match by index in filtered list — not perfect, but works
     });
 
-    clearHighlight();
     resetAnim();
+    renderMessageList(replayFilterType);
+
+    if (!currentWavefront.length) {
+        drawFrame(0);
+        updateMapHighlights();
+        return;
+    }
+
+    clearHighlight();
     drawFrame(0);
     updateMapForWavefront();
 }
