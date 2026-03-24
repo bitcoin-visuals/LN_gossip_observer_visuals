@@ -32,6 +32,7 @@ NOTES_FILE = DATA_DIR / "notes.md"
 OUTPUT_DIR = BASE_DIR / "static" / "data"
 PEERS_OUTPUT_FILE = OUTPUT_DIR / "peers.json"
 WAVEFRONTS_DIR = OUTPUT_DIR / "wavefronts"
+MESSAGE_INTEL_OUTPUT_FILE = OUTPUT_DIR / "message_intel.json"
 
 # Message types
 MSG_TYPES = {1: "channel_announcement", 2: "node_announcement", 3: "channel_update"}
@@ -470,11 +471,31 @@ def build_message_catalog(metadata: pl.DataFrame, timings: pl.LazyFrame, message
         pl.col("scid").cast(pl.Utf8).alias("scid_str")
     )
 
-    timing_counts = timings.group_by("hash").agg(pl.len().alias("timing_rows")).collect()
+    timing_summary = (
+        timings.filter(pl.col("hash").is_in(message_hashes))
+        .group_by("hash")
+        .agg(
+            pl.len().alias("timing_rows"),
+            pl.col("recv_timestamp").min().alias("first_seen"),
+            pl.col("recv_timestamp").max().alias("last_seen"),
+        )
+        .with_columns(
+            (pl.col("last_seen") - pl.col("first_seen")).dt.total_milliseconds().alias("spread_ms")
+        )
+        .select([
+            pl.col("hash"),
+            pl.col("timing_rows"),
+            pl.col("spread_ms"),
+        ])
+        .collect()
+    )
     catalog = (
         scoped.lazy()
-        .join(timing_counts.lazy(), on="hash", how="left")
-        .with_columns(pl.col("timing_rows").fill_null(0))
+        .join(timing_summary.lazy(), on="hash", how="left")
+        .with_columns([
+            pl.col("timing_rows").fill_null(0),
+            pl.col("spread_ms").fill_null(0),
+        ])
         .select([
             pl.col("hash"),
             pl.col("type"),
@@ -482,6 +503,7 @@ def build_message_catalog(metadata: pl.DataFrame, timings: pl.LazyFrame, message
             pl.col("orig_node"),
             pl.col("scid_str"),
             pl.col("timing_rows"),
+            pl.col("spread_ms"),
         ])
         .collect()
     )
@@ -496,10 +518,134 @@ def build_message_catalog(metadata: pl.DataFrame, timings: pl.LazyFrame, message
             "orig_node": row["orig_node"],
             "scid": row["scid_str"],
             "timing_rows": int(row["timing_rows"] or 0),
+            "summary_spread_ms": float(row["spread_ms"] or 0),
             "activity_score": int((row["timing_rows"] or 0) + (row["size"] or 0)),
         })
 
     items.sort(key=lambda item: (item["activity_score"], item["timing_rows"], item["size"]), reverse=True)
+    return items
+
+
+def build_message_intel(
+    metadata: pl.DataFrame,
+    timings: pl.LazyFrame,
+    message_hashes: list[int] | None,
+    replay_wavefronts: dict[str, dict] | None = None,
+    peers: dict | None = None,
+    message_scope: dict | None = None,
+) -> list[dict]:
+    """Build a full-scope per-message intelligence dataset for the frontend.
+
+    Pass message_hashes=None to include ALL messages in metadata.
+    This intentionally stores only per-message aggregates, not full arrival sequences.
+    It keeps timing span information (`spread_ms`) wherever timing rows exist.
+    """
+    replay_wavefronts = replay_wavefronts or {}
+    peers = peers or {}
+    message_scope = message_scope or {"nodes": {}}
+
+    scoped = (
+        metadata if message_hashes is None
+        else metadata.filter(pl.col("hash").is_in(message_hashes))
+    ).with_columns(pl.col("scid").cast(pl.Utf8).alias("scid_str"))
+
+    filtered_timings = (
+        timings if message_hashes is None
+        else timings.filter(pl.col("hash").is_in(message_hashes))
+    )
+
+    timing_summary = (
+        filtered_timings
+        .group_by("hash")
+        .agg(
+            pl.len().alias("timing_rows"),
+            pl.col("recv_peer").n_unique().alias("peer_count_summary"),
+            pl.col("recv_timestamp").min().alias("first_seen"),
+            pl.col("recv_timestamp").max().alias("last_seen"),
+        )
+        .with_columns(
+            (pl.col("last_seen") - pl.col("first_seen")).dt.total_milliseconds().alias("spread_ms")
+        )
+        .select([
+            pl.col("hash"),
+            pl.col("timing_rows"),
+            pl.col("peer_count_summary"),
+            pl.col("spread_ms"),
+        ])
+        .collect()
+    )
+
+    intel = (
+        scoped.lazy()
+        .join(timing_summary.lazy(), on="hash", how="left")
+        .with_columns([
+            pl.col("timing_rows").fill_null(0),
+            pl.col("peer_count_summary").fill_null(0),
+            pl.col("spread_ms").fill_null(0),
+        ])
+        .select([
+            pl.col("hash"),
+            pl.col("type"),
+            pl.col("size"),
+            pl.col("orig_node"),
+            pl.col("scid_str"),
+            pl.col("timing_rows"),
+            pl.col("peer_count_summary"),
+            pl.col("spread_ms"),
+        ])
+        .collect()
+    )
+
+    items: list[dict] = []
+    nodes_scope = message_scope.get("nodes", {}) if isinstance(message_scope, dict) else {}
+
+    for row in intel.iter_rows(named=True):
+        hash_str = str(row["hash"])
+        replay_meta = replay_wavefronts.get(hash_str, {})
+        orig_node = row["orig_node"]
+        node_scope = nodes_scope.get(orig_node, {}) if orig_node else {}
+        alias = peers.get(orig_node, {}).get("alias") if orig_node else None
+
+        timing_rows = int(row["timing_rows"] or 0)
+        size = int(row["size"] or 0)
+        peer_count_summary = int(row["peer_count_summary"] or 0)
+        spread_ms = float(row["spread_ms"] or 0)
+
+        effective_peer_count = int(replay_meta.get("total_peers") or peer_count_summary)
+        effective_spread_ms = float(replay_meta.get("spread_ms") or spread_ms)
+
+        items.append({
+            "hash": hash_str,
+            "type": MSG_TYPES.get(row["type"], "unknown"),
+            "type_id": int(row["type"]),
+            "size": size,
+            "orig_node": orig_node,
+            "orig_node_alias": alias,
+            "scid": row["scid_str"],
+            "timing_rows": timing_rows,
+            "activity_score": int(timing_rows + size),
+            "replay_available": hash_str in replay_wavefronts,
+            # summary_available is true for any message with propagation data (peer_count > 1)
+            "summary_available": effective_peer_count > 1,
+            "summary_peer_count": effective_peer_count,
+            "summary_spread_ms": effective_spread_ms,
+            "has_origin": bool(orig_node),
+            "has_scid": bool(row["scid_str"]),
+            "origin_scope_message_count": int(node_scope.get("message_count") or 0),
+            "origin_scope_channel_count": int(node_scope.get("channel_count") or 0),
+            "origin_scope_mapped_peer_count": int(node_scope.get("mapped_peer_count") or 0),
+        })
+
+    items.sort(
+        key=lambda item: (
+            item["activity_score"],
+            item["timing_rows"],
+            item["summary_peer_count"],
+            item["summary_spread_ms"],
+            item["size"],
+        ),
+        reverse=True,
+    )
     return items
 
 
@@ -615,6 +761,7 @@ def build_channel_views(metadata: pl.DataFrame, timings: pl.LazyFrame, peers: di
 
     channel_lookup = {}
     channel_hashes_by_scid: dict[str, list[int]] = {}
+    node_announcement_hashes_by_origin: dict[str, list[int]] = {}
     for row in top_channels.iter_rows(named=True):
         origin_nodes = [pk for pk in (row["origin_nodes"] or []) if pk]
         aliases = []
@@ -638,6 +785,18 @@ def build_channel_views(metadata: pl.DataFrame, timings: pl.LazyFrame, peers: di
             "origin_nodes": origin_nodes,
             "origin_aliases": aliases,
         }
+
+    node_announcement_rows = (
+        metadata.lazy()
+        .filter(pl.col("type") == 2)
+        .group_by("orig_node")
+        .agg(pl.col("hash").unique().sort().alias("node_announcement_hashes"))
+        .collect()
+    )
+    for row in node_announcement_rows.iter_rows(named=True):
+        pk = row["orig_node"]
+        if pk:
+            node_announcement_hashes_by_origin[pk] = row["node_announcement_hashes"] or []
 
     node_channels: dict[str, list] = {}
     node_summary: dict[str, dict] = {}
@@ -685,6 +844,7 @@ def build_channel_views(metadata: pl.DataFrame, timings: pl.LazyFrame, peers: di
         node_peer_sets.setdefault(pk, set()).add(pk)
         global_peer_keys.add(pk)
         global_message_hashes.update(channel_hashes_by_scid.get(scid, []))
+        global_message_hashes.update(node_announcement_hashes_by_origin.get(pk, []))
 
     for row in origin_links.iter_rows(named=True):
         pk = row["orig_node"]
@@ -705,9 +865,11 @@ def build_channel_views(metadata: pl.DataFrame, timings: pl.LazyFrame, peers: di
                 **channel_lookup[scid],
             })
         node_hashes.setdefault(pk, set()).update(row["origin_hashes"] or [])
+        node_hashes.setdefault(pk, set()).update(node_announcement_hashes_by_origin.get(pk, []))
         node_peer_sets.setdefault(pk, set()).add(pk)
         global_peer_keys.add(pk)
         global_message_hashes.update(channel_hashes_by_scid.get(scid, []))
+        global_message_hashes.update(node_announcement_hashes_by_origin.get(pk, []))
 
     for pk, items in node_channels.items():
         items.sort(
@@ -874,6 +1036,7 @@ def main():
     channels, node_channels, channel_summary, message_scope, global_message_hashes = build_channel_views(metadata, timings, peers)
     channel_scope_summary = build_channel_scope_summary(channels, node_channels, peers, message_scope)
     message_catalog = build_message_catalog(metadata, timings, global_message_hashes)
+    message_intel = build_message_intel(metadata, timings, global_message_hashes, wavefronts, peers, message_scope)
 
     # 7. Detect privacy leaks
     print("\n[7/8] Detecting privacy leaks...")
@@ -903,6 +1066,10 @@ def main():
     with open(OUTPUT_DIR / "message_catalog.json", "w") as f:
         json.dump(message_catalog, f)
     print(f"  message_catalog.json ({len(message_catalog)} messages)")
+
+    with open(MESSAGE_INTEL_OUTPUT_FILE, "w") as f:
+        json.dump(message_intel, f)
+    print(f"  message_intel.json ({len(message_intel)} messages)")
 
     with open(OUTPUT_DIR / "communities.json", "w") as f:
         json.dump(COMMUNITY_LABELS, f, indent=2)

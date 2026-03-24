@@ -289,7 +289,7 @@
             position: relative;
         }
 
-        /* ── Q1: Propagation Replay (top-left) ── */
+    /* ── Q1: Message Intelligence (top-left) ── */
         .q-replay .quad-header h2 { color: #ff6b35; }
         .q-replay .badge { background: #ff6b3520; color: #ff6b35; }
 
@@ -304,12 +304,11 @@
             flex-direction: column;
             flex-shrink: 0;
         }
-        .replay-canvas-wrap {
+        .msg-intel-panel {
             flex: 1;
             position: relative;
             min-width: 0;
         }
-        .replay-canvas-wrap canvas { display: block; }
 
         /* Message list */
         .msg-filter {
@@ -399,6 +398,141 @@
         .type-node_ann { background: #e9c46a25; color: #e9c46a; }
         .type-chan_upd { background: #457b9d25; color: #457b9d; }
         .msg-item .peers-count { color: #555; font-size: 8px; }
+        .msg-intel-wrap {
+            position: absolute;
+            inset: 0;
+            padding: 14px 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: radial-gradient(circle at top, rgba(255,107,53,0.08), transparent 45%), #0a0a0f;
+        }
+        .msg-intel-empty {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 12px;
+            text-align: center;
+            padding: 24px;
+        }
+        .msg-card {
+            border: 1px solid #1d1d31;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.02);
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .msg-card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .msg-card-title {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 0;
+        }
+        .msg-card-hash {
+            font-size: 12px;
+            color: #f2f4fb;
+            word-break: break-all;
+        }
+        .msg-card-subtitle {
+            font-size: 9px;
+            color: #7d8397;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .msg-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .msg-chip {
+            font-size: 9px;
+            border-radius: 999px;
+            border: 1px solid #2a2a3d;
+            padding: 3px 8px;
+            color: #d7d9e3;
+            background: #11111a;
+        }
+        .msg-chip.accent {
+            border-color: #ff6b3533;
+            color: #ffb08a;
+            background: rgba(255,107,53,0.08);
+        }
+        .msg-chip.good {
+            border-color: #2a9d8f40;
+            color: #74d5c9;
+            background: rgba(42,157,143,0.08);
+        }
+        .msg-card-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .msg-stat {
+            background: #0f1018;
+            border: 1px solid #1a1a2e;
+            border-radius: 8px;
+            padding: 9px 10px;
+        }
+        .msg-stat-label {
+            font-size: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.9px;
+            color: #6f768d;
+            margin-bottom: 5px;
+        }
+        .msg-stat-value {
+            font-size: 13px;
+            color: #f4f6fb;
+            font-weight: 700;
+            word-break: break-word;
+        }
+        .msg-section-title {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #6f768d;
+        }
+        .msg-profile-text {
+            font-size: 10px;
+            line-height: 1.5;
+            color: #c0c4d4;
+        }
+        .msg-bar-track {
+            height: 8px;
+            border-radius: 999px;
+            background: #181826;
+            overflow: hidden;
+        }
+        .msg-bar-fill {
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #457b9d, #ff6b35);
+        }
+        .msg-bar-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 9px;
+            color: #8d93a8;
+            margin-top: 5px;
+        }
+        .msg-hint {
+            font-size: 9px;
+            line-height: 1.5;
+            color: #8087a1;
+            border-top: 1px solid #1a1a2e;
+            padding-top: 10px;
+        }
 
         /* Playback bar */
         .playback-bar {
@@ -869,11 +1003,11 @@
 </div>
 
 <div class="grid">
-    <!-- Q1: Propagation Replay (top-left) -->
+    <!-- Q1: Message Intelligence (top-left) -->
     <div class="quad q-replay">
         <div class="quad-header">
-            <h2>📡 Message Propagation Replay</h2>
-            <span class="badge" id="replay-badge">0 replay msgs</span>
+            <h2>📡 Message Intelligence</h2>
+            <span class="badge" id="replay-badge">0 scoped msgs</span>
         </div>
         <div class="quad-body">
             <div class="replay-layout">
@@ -893,20 +1027,12 @@
                     </div>
                     <div class="msg-list" id="msg-list"></div>
                 </div>
-                <div class="replay-canvas-wrap" id="canvas-wrap">
-                    <canvas id="viz-canvas"></canvas>
+                <div class="msg-intel-panel">
+                    <div class="msg-intel-wrap" id="msg-intel-wrap">
+                        <div class="msg-intel-empty">Select a message to inspect its metadata footprint.</div>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
-        <div class="playback-bar">
-            <button id="btn-play">▶</button>
-            <button class="secondary" id="btn-reset">↺</button>
-            <span class="time" id="time-display">0.00s</span>
-            <span class="speed-ctrl">
-                <input type="range" id="speed-slider" min="0.1" max="10" step="0.1" value="1">
-                <span id="speed-label">1×</span>
-            </span>
         </div>
     </div>
 

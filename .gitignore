@@ -37,3 +37,19 @@ data/raw/gossip_archives/
 
 # Obsolete heavy generated artifacts not used by the current static prototype
 static/data/message_participants.json
+
+# Generated build artifacts (output of preprocess.py) — committed separately or regenerated
+static/data/wavefronts/
+static/data/peers.json
+static/data/wavefronts.json
+static/data/messages.json
+static/data/message_catalog.json
+static/data/message_intel.json
+static/data/communities.json
+static/data/channels.json
+static/data/node_channels.json
+static/data/message_scope.json
+static/data/channel_scope_summary.json
+static/data/summary.json
+static/data/leaks.json
+static/data/fingerprints.json
