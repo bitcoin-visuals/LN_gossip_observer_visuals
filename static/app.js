@@ -25,10 +25,12 @@ let nodeChannels = {};
 let messageScope = { global: {}, nodes: {} };
 let channelScopeSummary = { global: {}, nodes: {} };
 let messageCatalog = [];
+let messageIntel = [];
 let replayRenderLimit = 100;
 let replayFilterType = "all";
 let replaySearchText = "";
 let replaySelectionToken = 0;
+let messageDetailMode = "replay";
 
 const replayWavefrontCache = new Map();
 
@@ -174,23 +176,17 @@ const DEFAULT_MAP_VIEW = {
 // ═══════════════════════════════════════════════════════════════
 
 window.addEventListener("load", async () => {
-    canvas = document.getElementById("viz-canvas");
-    ctx = canvas.getContext("2d");
-
     await loadData();
-    resizeCanvas();
     initMap();
     setupUI();
 
     window.addEventListener("resize", () => {
-        resizeCanvas();
-        computeLayout();
-        drawFrame(0);
         leafletMap?.invalidateSize();
     });
 
-    // Auto-select first scoped message from the catalog browser
-    if (messageCatalog.length > 0) selectMessage(messageCatalog[0]);
+    // Auto-select first scoped message from the all-message intelligence browser
+    const initialMessage = messageIntel[0] || messageCatalog[0];
+    if (initialMessage) selectMessage(initialMessage);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -198,7 +194,7 @@ window.addEventListener("load", async () => {
 // ═══════════════════════════════════════════════════════════════
 
 async function loadData() {
-    const [p, w, m, c, l, s, fp, ch, nch, ms, css, mc] = await Promise.all([
+    const [p, w, m, c, l, s, fp, ch, nch, ms, css, mc, mi] = await Promise.all([
         fetchJSON(`${DATA_BASE}/peers.json`),
         fetchJSON(`${DATA_BASE}/wavefronts.json`),
         fetchJSON(`${DATA_BASE}/messages.json`),
@@ -211,6 +207,7 @@ async function loadData() {
         fetchJSON(`${DATA_BASE}/message_scope.json`),
         fetchJSON(`${DATA_BASE}/channel_scope_summary.json`),
         fetchJSON(`${DATA_BASE}/message_catalog.json`),
+        fetchJSON(`${DATA_BASE}/message_intel.json`),
     ]);
     peers = p; wavefronts = w; communities = c; leaks = l; summary = s; fingerprints = fp;
     channels = Array.isArray(ch) ? ch : [];
@@ -218,6 +215,7 @@ async function loadData() {
     messageScope = ms && typeof ms === "object" ? ms : { global: {}, nodes: {} };
     channelScopeSummary = css && typeof css === "object" ? css : { global: {}, nodes: {} };
     messageCatalog = Array.isArray(mc) ? mc : [];
+    messageIntel = Array.isArray(mi) ? mi : [];
 
     // Build pubkey → fingerprint lookup
     fpByPubkey = {};
@@ -252,15 +250,19 @@ async function loadData() {
     }
 
     const replayHashes = new Set(messages.map(msg => String(msg.hash)));
-    messageCatalog = messageCatalog.map(item => {
+    const enrichScopedMessage = (item) => {
         const replayMeta = replayHashes.has(String(item.hash)) ? (wavefronts[item.hash] || wavefronts[String(item.hash)] || {}) : null;
+        const peerCount = replayMeta?.total_peers || item.summary_peer_count || item.peer_count || 0;
         return {
             ...item,
             replay_available: replayHashes.has(String(item.hash)),
-            peer_count: replayMeta?.total_peers || item.timing_rows || 0,
-            time_spread_ms: replayMeta?.spread_ms || 0,
+            summary_available: item.summary_available || peerCount > 1,
+            peer_count: peerCount,
+            time_spread_ms: replayMeta?.spread_ms || item.summary_spread_ms || item.time_spread_ms || 0,
         };
-    });
+    };
+    messageCatalog = messageCatalog.map(enrichScopedMessage);
+    messageIntel = (messageIntel.length ? messageIntel : messageCatalog).map(enrichScopedMessage);
 
     // Header stats
     const mapLocatedCount = Object.values(peers).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)).length;
@@ -268,7 +270,7 @@ async function loadData() {
     document.getElementById("stat-msgs").textContent = (messageScope.global.message_count || channelScopeSummary.global.message_count || summary.global_scoped_messages || 0).toLocaleString();
     document.getElementById("stat-ips").textContent = (messageScope.global.mapped_peer_count || mapLocatedCount).toLocaleString();
     // Badges
-    document.getElementById("replay-badge").textContent = `${messageCatalog.length.toLocaleString()} scoped msgs`;
+    document.getElementById("replay-badge").textContent = `${messageIntel.length.toLocaleString()} scoped msgs`;
     document.getElementById("map-badge").textContent = mapLocatedCount + " mapped";
     document.getElementById("suspect-badge").textContent = `${(summary.total_channels_indexed || channels.length || 0).toLocaleString()} tracked`;
     const nodeDetailsBadge = document.getElementById("node-details-badge");
@@ -302,6 +304,138 @@ function getCachedWavefront(msgHash) {
     return replayWavefrontCache.get(key) || wavefronts[key] || wavefronts[msgHash] || null;
 }
 
+function findMessageMeta(msgHash) {
+    const key = String(msgHash);
+    return messages.find(msg => String(msg.hash) === key)
+        || messageIntel.find(msg => String(msg.hash) === key)
+        || messageCatalog.find(msg => String(msg.hash) === key)
+        || null;
+}
+
+function setMessageDetailMode(mode) {
+    messageDetailMode = "intel";
+    const intelWrap = document.getElementById("msg-intel-wrap");
+    if (intelWrap) intelWrap.hidden = false;
+    renderMessageIntel(currentMsg);
+}
+
+function formatMessageType(type) {
+    if (type === "channel_announcement") return "Channel announcement";
+    if (type === "node_announcement") return "Node announcement";
+    if (type === "channel_update") return "Channel update";
+    return type || "Unknown message";
+}
+
+function getSpreadProfile(msg) {
+    const peerCount = Number(msg?.peer_count || 0);
+    const spreadMs = Number(msg?.time_spread_ms || 0);
+    const timingRows = Number(msg?.timing_rows || 0);
+    if (!peerCount && !spreadMs && !timingRows) return "catalog-only";
+    if (spreadMs && peerCount >= 700) return "broad + sustained";
+    if (spreadMs && spreadMs < 60_000) return "fast burst";
+    if (peerCount >= 250) return "broad reach";
+    if (timingRows >= 5_000) return "relay-heavy";
+    return "narrow / sparse";
+}
+
+function buildMessageNarrative(msg) {
+    if (!msg) return "Select a scoped message to inspect its identity, relay footprint, and available timing summary.";
+    const parts = [];
+    parts.push(`${formatMessageType(msg.type)} message`);
+    if (msg.scid) parts.push(`channel SCID ${msg.scid}`);
+    if (msg.orig_node) parts.push(`originating from ${msg.orig_node.slice(0, 20)}…`);
+    return parts.join(" · ") + ".";
+}
+
+function renderMessageIntel(msg) {
+    const intelWrap = document.getElementById("msg-intel-wrap");
+    if (!intelWrap) return;
+    if (!msg) {
+        intelWrap.innerHTML = '<div class="msg-intel-empty">Select a message to inspect its metadata footprint.</div>';
+        return;
+    }
+
+    const messageMeta = findMessageMeta(msg.hash) || {};
+    const replayMeta = wavefronts[String(msg.hash)] || {};
+    const peerCount = Number(msg.peer_count || replayMeta.total_peers || 0);
+    const spreadMs = Number(msg.time_spread_ms || replayMeta.spread_ms || 0);
+    const timingRows = Number(msg.timing_rows || 0);
+    const activityScore = Number(msg.activity_score || 0);
+    const intensityMax = Math.max(peerCount, timingRows, 1);
+    const reachPct = Math.min(100, (peerCount / Math.max(summary.global_scoped_peers || 1, 1)) * 100);
+    const relayPct = Math.min(100, (timingRows / Math.max(summary.total_timing_rows || 1, 1)) * 100000);
+    const fingerprint = messageMeta.orig_node ? fpByPubkey[messageMeta.orig_node] : null;
+    const scopeStats = messageMeta.orig_node ? (messageScope.nodes?.[messageMeta.orig_node] || {}) : {};
+    const profile = getSpreadProfile({ ...messageMeta, ...msg, peer_count: peerCount, timing_rows: timingRows, time_spread_ms: spreadMs });
+    const hasSummary = msg.summary_available || msg.replay_available || peerCount > 1;
+    const replayState = hasSummary ? "timing summary available" : "metadata-only";
+
+    intelWrap.innerHTML = `
+        <div class="msg-card">
+            <div class="msg-card-header">
+                <div class="msg-card-title">
+                    <div class="msg-card-subtitle">${escHtml(formatMessageType(messageMeta.type || msg.type))}</div>
+                    <div class="msg-card-hash">${escHtml(String(msg.hash))}</div>
+                </div>
+                <div class="msg-chip-row">
+                    <span class="msg-chip accent">${escHtml(profile)}</span>
+                    <span class="msg-chip ${hasSummary ? "good" : ""}">${escHtml(replayState)}</span>
+                </div>
+            </div>
+
+            <div class="msg-profile-text">${escHtml(buildMessageNarrative({ ...messageMeta, ...msg, peer_count: peerCount, timing_rows: timingRows, time_spread_ms: spreadMs }))}</div>
+
+            <div class="msg-card-grid">
+                <div class="msg-stat">
+                    <div class="msg-stat-label">Message size</div>
+                    <div class="msg-stat-value">${Number(messageMeta.size || 0).toLocaleString()} B</div>
+                </div>
+                <div class="msg-stat">
+                    <div class="msg-stat-label">Observed peer reach</div>
+                    <div class="msg-stat-value">${peerCount.toLocaleString()}</div>
+                </div>
+                <div class="msg-stat">
+                    <div class="msg-stat-label">Timing span</div>
+                    <div class="msg-stat-value">${spreadMs ? `${(spreadMs / 1000).toFixed(2)} s` : "not available"}</div>
+                </div>
+                <div class="msg-stat">
+                    <div class="msg-stat-label">Origin node</div>
+                    <div class="msg-stat-value">${messageMeta.orig_node ? escHtml(messageMeta.orig_node) : "not encoded"}</div>
+                </div>
+                <div class="msg-stat">
+                    <div class="msg-stat-label">Channel / SCID</div>
+                    <div class="msg-stat-value">${messageMeta.scid ? escHtml(messageMeta.scid) : "not channel-linked"}</div>
+                </div>
+            </div>
+
+            <div>
+                <div class="msg-section-title">Footprint bars</div>
+                <div class="msg-bar-track"><div class="msg-bar-fill" style="width:${reachPct.toFixed(1)}%"></div></div>
+                <div class="msg-bar-meta"><span>Scoped peer reach</span><span>${reachPct.toFixed(1)}%</span></div>
+                <div class="msg-bar-track" style="margin-top:8px;"><div class="msg-bar-fill" style="width:${Math.max(4, Math.min(100, relayPct))}%"></div></div>
+                <div class="msg-bar-meta"><span>Relay activity index</span><span>${timingRows.toLocaleString()} relays</span></div>
+            </div>
+
+            <div>
+                <div class="msg-section-title">Context drivers</div>
+                <div class="msg-chip-row" style="margin-top:6px;">
+                    <span class="msg-chip">type_id ${Number(messageMeta.type_id || 0)}</span>
+                    <span class="msg-chip">activity ${activityScore.toFixed(1)}</span>
+                    ${scopeStats.message_count ? `<span class="msg-chip">origin scope msgs ${Number(scopeStats.message_count).toLocaleString()}</span>` : ""}
+                    ${scopeStats.channel_count ? `<span class="msg-chip">origin channels ${Number(scopeStats.channel_count).toLocaleString()}</span>` : ""}
+                    ${scopeStats.mapped_peer_count ? `<span class="msg-chip">mapped peers ${Number(scopeStats.mapped_peer_count).toLocaleString()}</span>` : ""}
+                    ${fingerprint?.group_size ? `<span class="msg-chip">fingerprint cluster ${Number(fingerprint.group_size).toLocaleString()}</span>` : ""}
+                    ${fingerprint?.feature_names?.length ? `<span class="msg-chip">features ${escHtml(fingerprint.feature_names.slice(0, 3).join(", "))}</span>` : ""}
+                </div>
+            </div>
+
+                <div class="msg-hint">
+                Compare identity, origin, channel context, reach, and timing span without loading the old propagation spiral or player controls.
+            </div>
+        </div>
+    `;
+}
+
 async function ensureWavefrontLoaded(msgHash) {
     const key = String(msgHash);
     const cached = getCachedWavefront(key);
@@ -317,23 +451,6 @@ async function ensureWavefrontLoaded(msgHash) {
     }
 
     return null;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  CANVAS LAYOUT
-// ═══════════════════════════════════════════════════════════════
-
-function resizeCanvas() {
-    const wrap = document.getElementById("canvas-wrap");
-    if (!wrap) return;
-    W = wrap.clientWidth;
-    H = wrap.clientHeight;
-    canvas.width = W * devicePixelRatio;
-    canvas.height = H * devicePixelRatio;
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
-    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    computeLayout();
 }
 
 function computeLayout() {
@@ -378,22 +495,10 @@ function setupUI() {
         btn.addEventListener("click", () => {
             document.querySelectorAll(".msg-filter button").forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
+            replayRenderLimit = 100;
             renderMessageList(btn.dataset.type);
         });
     });
-
-    // Playback
-    document.getElementById("btn-play").addEventListener("click", togglePlay);
-    document.getElementById("btn-reset").addEventListener("click", resetAnim);
-    document.getElementById("speed-slider").addEventListener("input", e => {
-        animSpeed = parseFloat(e.target.value);
-        document.getElementById("speed-label").textContent = animSpeed.toFixed(1) + "×";
-    });
-
-    // Canvas hover
-    canvas.addEventListener("mousemove", handleCanvasHover);
-    canvas.addEventListener("mouseleave", () => hideTooltip());
-    canvas.addEventListener("click", handleCanvasClick);
 
     const msgSearch = document.getElementById("msg-search");
     const loadMoreBtn = document.getElementById("msg-load-more");
@@ -412,6 +517,7 @@ function setupUI() {
     }
 
     renderMessageList("all");
+    setMessageDetailMode();
     renderAllMapMarkers();
 }
 
@@ -423,9 +529,11 @@ function renderMessageList(filterType) {
     const list = document.getElementById("msg-list");
     const resultsMeta = document.getElementById("msg-results-meta");
     const loadMoreBtn = document.getElementById("msg-load-more");
+    const normalizedFilterType = filterType || "all";
     list.innerHTML = "";
-    replayFilterType = filterType;
-    const filtered = (filterType === "all" ? messageCatalog : messageCatalog.filter(m => m.type === filterType))
+    replayFilterType = normalizedFilterType;
+    const universe = messageIntel.length ? messageIntel : messageCatalog;
+    const filtered = (normalizedFilterType === "all" ? universe : universe.filter(m => m.type === normalizedFilterType))
         .filter(m => {
             if (!replaySearchText) return true;
             return [m.hash, m.scid, m.orig_node, m.type]
@@ -448,9 +556,15 @@ function renderMessageList(filterType) {
         el.className = "msg-item" + (currentMsg?.hash === msg.hash ? " active" : "");
         const ts = msg.type === "channel_announcement" ? "chan_ann"
             : msg.type === "node_announcement" ? "node_ann" : "chan_upd";
+        const spanMs = msg.time_spread_ms || msg.summary_spread_ms || 0;
+        const peerCt = msg.summary_peer_count || msg.peer_count || 0;
+        const hasSummaryItem = msg.summary_available || msg.replay_available || peerCt > 1;
         el.innerHTML = `
             <span class="type-badge type-${ts}">${ts}</span>
-            <span class="peers-count">${msg.replay_available ? `${msg.peer_count}p · ${(msg.time_spread_ms / 1000).toFixed(1)}s` : `${(msg.timing_rows || 0).toLocaleString()} relays`}</span>`;
+            <span class="peers-count">${hasSummaryItem
+                ? `${peerCt}p · ${(spanMs / 1000).toFixed(1)}s`
+                : `${(msg.timing_rows || 0).toLocaleString()} relays${spanMs ? ` · ${(spanMs / 1000).toFixed(1)}s span` : " · intel"}`
+            }</span>`;
         el.addEventListener("click", () => selectMessage(msg));
         list.appendChild(el);
     }
@@ -557,10 +671,13 @@ function clearHighlight() {
     updateAllHighlights();
 }
 
-function updateAllHighlights() {
-    // Q1 — Canvas: redraw
-    drawFrame(getCurrentElapsed());
+function clearPeerHighlight({ preserveSelectedNode = false } = {}) {
+    highlightedPeers.clear();
+    if (!preserveSelectedNode) selectedNodePubkey = null;
+    updateAllHighlights();
+}
 
+function updateAllHighlights() {
     // Q2 — Map: highlight markers
     updateMapHighlights();
 
@@ -836,85 +953,13 @@ function updateMapForWavefront() {
 // ═══════════════════════════════════════════════════════════════
 
 async function selectMessage(msg) {
-    const selectionToken = ++replaySelectionToken;
     currentMsg = msg;
-    const wfData = await ensureWavefrontLoaded(msg.hash);
-    if (selectionToken !== replaySelectionToken) return;
-    currentWavefront = Array.isArray(wfData) ? wfData : (wfData.arrivals || []);
-
-    // Init peer states
-    peerStates = {};
-    for (const ph of Object.keys(peers)) peerStates[ph] = { delay: Infinity };
-    for (const entry of currentWavefront) {
-        const ph = entry.peer || entry.peer_hash;
-        if (peerStates[ph]) peerStates[ph].delay = entry.delay_ms;
-    }
 
     // Highlight active in list
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
-    // Find and activate (best effort since list may be filtered)
-    document.querySelectorAll(".msg-item").forEach((el, i) => {
-        // match by index in filtered list — not perfect, but works
-    });
-
-    resetAnim();
     renderMessageList(replayFilterType);
-
-    if (!currentWavefront.length) {
-        drawFrame(0);
-        updateMapHighlights();
-        return;
-    }
-
-    clearHighlight();
-    drawFrame(0);
-    updateMapForWavefront();
-}
-
-function togglePlay() {
-    if (animPlaying) {
-        animPlaying = false;
-        cancelAnimationFrame(animFrame);
-        document.getElementById("btn-play").textContent = "▶";
-    } else {
-        animPlaying = true;
-        animStart = performance.now();
-        document.getElementById("btn-play").textContent = "⏸";
-        animLoop();
-    }
-}
-
-function resetAnim() {
-    animPlaying = false;
-    animStart = null;
-    cancelAnimationFrame(animFrame);
-    document.getElementById("btn-play").textContent = "▶";
-    document.getElementById("progress-fill").style.width = "0%";
-    document.getElementById("time-display").textContent = "0.00s";
-}
-
-function getCurrentElapsed() {
-    if (!animStart || !animPlaying) return 0;
-    return (performance.now() - animStart) * animSpeed;
-}
-
-function animLoop() {
-    if (!animPlaying) return;
-    const elapsed = getCurrentElapsed();
-    const maxDelay = currentMsg?.time_spread_ms || 5000;
-
-    if (elapsed > maxDelay + 500) {
-        animPlaying = false;
-        document.getElementById("btn-play").textContent = "▶";
-        drawFrame(maxDelay);
-        document.getElementById("progress-fill").style.width = "100%";
-        return;
-    }
-
-    drawFrame(elapsed);
-    document.getElementById("progress-fill").style.width = Math.min(100, elapsed / maxDelay * 100) + "%";
-    document.getElementById("time-display").textContent = (elapsed / 1000).toFixed(2) + "s";
-    animFrame = requestAnimationFrame(animLoop);
+    renderMessageIntel(msg);
+    setMessageDetailMode(messageDetailMode);
 }
 
 // ═══════════════════════════════════════════════════════════════
