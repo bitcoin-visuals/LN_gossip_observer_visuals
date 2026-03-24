@@ -265,7 +265,7 @@ async function loadData() {
     // Header stats
     const mapLocatedCount = Object.values(peers).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)).length;
     document.getElementById("stat-peers").textContent = (messageScope.global.peer_count || summary.global_scoped_peers || summary.total_peers || Object.keys(peers).length).toLocaleString();
-    document.getElementById("stat-msgs").textContent = "11,317";
+    document.getElementById("stat-msgs").textContent = (messageScope.global.message_count || channelScopeSummary.global.message_count || summary.global_scoped_messages || 0).toLocaleString();
     document.getElementById("stat-ips").textContent = (messageScope.global.mapped_peer_count || mapLocatedCount).toLocaleString();
     // Badges
     document.getElementById("replay-badge").textContent = `${messageCatalog.length.toLocaleString()} scoped msgs`;
