@@ -147,8 +147,12 @@ const THREAT_DEFS = [
 
 // ─── Selection state ────────────────────────────────────────────
 let highlightedPeers = new Set();   // pubkeys currently highlighted across all panels
+let prevHighlightedSize = 0;        // size before last updateMapHighlights call
+let mapWasZoomedIn = false;         // true only when map actually flew to a node/bounds
 let currentMsg = null;
 let currentWavefront = [];
+let nodeListContext = { pubkeys: [], label: "All nodes", source: "global" }; // Layer 1 context
+let selectedChannelScid = null;     // set when a channel_announcement message is selected; drives channel panel filter
 
 // ─── Animation ──────────────────────────────────────────────────
 let animFrame = null;
@@ -167,7 +171,7 @@ let mapMarkers = {};          // pubkey → L.circleMarker
 let mapHighlightLayer = null;
 let selectedNodePubkey = null;
 const DEFAULT_MAP_VIEW = {
-    center: [25, 0],
+    center: [25, 15],
     zoom: 2,
 };
 
@@ -184,9 +188,18 @@ window.addEventListener("load", async () => {
         leafletMap?.invalidateSize();
     });
 
+    // Prime Q4 with global top relayers, then let selectMessage override with message context
+    renderNodeList(nodeListContext);
+
     // Auto-select first scoped message from the all-message intelligence browser
     const initialMessage = messageIntel[0] || messageCatalog[0];
-    if (initialMessage) selectMessage(initialMessage);
+    if (initialMessage) {
+        await selectMessage(initialMessage);
+        // Don't let the auto-selected message filter the channels panel on load —
+        // the user hasn't made a deliberate selection yet
+        selectedChannelScid = null;
+        renderChannelsPanel();
+    }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -278,6 +291,9 @@ async function loadData() {
         nodeDetailsBadge.textContent = "Select a node";
     }
     renderChannelsPanel();
+    // Prime the Q4 node list with global top relayers
+    const globalCtx = { pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" };
+    nodeListContext = globalCtx;
 }
 
 async function fetchJSON(url) {
@@ -531,6 +547,11 @@ function renderMessageList(filterType) {
     const loadMoreBtn = document.getElementById("msg-load-more");
     const normalizedFilterType = filterType || "all";
     list.innerHTML = "";
+    // If the filter type is changing, the previously selected message is no longer in context
+    if (normalizedFilterType !== replayFilterType) {
+        selectedChannelScid = null;
+        renderChannelsPanel();
+    }
     replayFilterType = normalizedFilterType;
     const universe = messageIntel.length ? messageIntel : messageCatalog;
     const filtered = (normalizedFilterType === "all" ? universe : universe.filter(m => m.type === normalizedFilterType))
@@ -559,8 +580,10 @@ function renderMessageList(filterType) {
         const spanMs = msg.time_spread_ms || msg.summary_spread_ms || 0;
         const peerCt = msg.summary_peer_count || msg.peer_count || 0;
         const hasSummaryItem = msg.summary_available || msg.replay_available || peerCt > 1;
+        const label = msg.orig_node_alias || msg.scid || String(msg.hash).slice(0, 12) + "…";
         el.innerHTML = `
             <span class="type-badge type-${ts}">${ts}</span>
+            <span class="msg-item-label">${escHtml(label)}</span>
             <span class="peers-count">${hasSummaryItem
                 ? `${peerCt}p · ${(spanMs / 1000).toFixed(1)}s`
                 : `${(msg.timing_rows || 0).toLocaleString()} relays${spanMs ? ` · ${(spanMs / 1000).toFixed(1)}s span` : " · intel"}`
@@ -668,7 +691,10 @@ function highlightPeers(pubkeys) {
 function clearHighlight() {
     highlightedPeers.clear();
     selectedNodePubkey = null;
+    selectedChannelScid = null;
     updateAllHighlights();
+    // Reset node list to global top relayers when map is clicked
+    renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
 }
 
 function clearPeerHighlight({ preserveSelectedNode = false } = {}) {
@@ -715,6 +741,14 @@ function getActiveChannelList() {
             title: peers[selectedNodePubkey]?.alias || selectedNodePubkey.slice(0, 12) + "…",
             mode: "node",
             items: nodeChannels[selectedNodePubkey],
+        };
+    }
+    if (selectedChannelScid) {
+        const matched = channels.filter(ch => ch.scid === selectedChannelScid);
+        return {
+            title: `Channel ${selectedChannelScid}`,
+            mode: "message_channel",
+            items: matched,
         };
     }
     return {
@@ -787,7 +821,7 @@ function renderChannelsPanel() {
 
     const active = getActiveChannelList();
     const availableItems = Array.isArray(active.items) ? active.items : [];
-    const displayLimit = active.mode === "node" ? availableItems.length : 30;
+    const displayLimit = (active.mode === "node" || active.mode === "message_channel") ? availableItems.length : 30;
     let items = availableItems.slice(0, displayLimit);
 
     if (active.mode === "node") {
@@ -797,8 +831,8 @@ function renderChannelsPanel() {
     const isTruncated = availableItems.length > items.length;
 
     if (!items.length) {
-        badge.textContent = selectedNodePubkey ? "0 linked" : `${(summary.total_channels_indexed || channels.length || 0).toLocaleString()} tracked`;
-        root.innerHTML = `<div class="channel-empty">${selectedNodePubkey ? "No channel activity indexed yet for this node." : "No channel data loaded."}</div>`;
+        badge.textContent = selectedNodePubkey ? "0 linked" : active.mode === "message_channel" ? "0 matched" : `${(summary.total_channels_indexed || channels.length || 0).toLocaleString()} tracked`;
+        root.innerHTML = `<div class="channel-empty">${selectedNodePubkey ? "No channel activity indexed yet for this node." : active.mode === "message_channel" ? "No indexed data found for this channel SCID." : "No channel data loaded."}</div>`;
         return;
     }
 
@@ -808,19 +842,36 @@ function renderChannelsPanel() {
     );
     badge.textContent = selectedNodePubkey
         ? `${items.length.toLocaleString()} linked`
-        : `${items.length.toLocaleString()} shown`;
+        : active.mode === "message_channel"
+            ? `${items.length.toLocaleString()} matched`
+            : `${items.length.toLocaleString()} shown`;
     root.innerHTML = `
         <div class="channel-panel">
             <div class="channel-summary">
                 ${active.mode === "node"
                     ? `<strong>${escHtml(active.title)}</strong> — showing ${items.length.toLocaleString()} node-associated channels whose messages intersect with the current global visible channel universe. Top metadata and channel tags are channel-wide aggregates; the orange bar and lower tags are filtered to the selected node.`
-                    : `<strong>${escHtml(active.title)}</strong> — showing the top ${items.length.toLocaleString()} channels ranked by observed relay footprint, then message count, then gossip payload size.${isTruncated ? ` (${availableItems.length.toLocaleString()} tracked total)` : ""}`}
+                    : active.mode === "message_channel"
+                        ? `<strong>${escHtml(active.title)}</strong> — filtered to the channel announced in the selected message.`
+                        : `<strong>${escHtml(active.title)}</strong> — showing the top ${items.length.toLocaleString()} channels ranked by observed relay footprint, then message count, then gossip payload size.${isTruncated ? ` (${availableItems.length.toLocaleString()} tracked total)` : ""}`}
             </div>
             <div class="channel-list">
                 ${items.map((item, index) => buildChannelCardHtml(item, index, maxTraffic)).join("")}
             </div>
         </div>
     `;
+
+    // Wire channel card clicks → update Q4 node list context
+    root.querySelectorAll(".channel-card").forEach(card => {
+        card.addEventListener("click", () => {
+            const scid = card.dataset.scid;
+            const ctx = deriveNodeListFromChannel(scid);
+            if (selectedNodePubkey) {
+                nodeListContext = ctx;
+            } else {
+                renderNodeList(ctx);
+            }
+        });
+    });
 
     updateHeaderStats(active, items);
 }
@@ -858,7 +909,16 @@ function initMap() {
     }).addTo(leafletMap);
     L.control.zoom({ position: "bottomright" }).addTo(leafletMap);
     leafletMap.on("click", () => clearHighlight());
-    setTimeout(() => leafletMap.invalidateSize(), 200);
+    // The CSS grid hasn't painted when L.map() runs, so Leaflet's initial coordinate
+    // space is wrong. invalidateSize() fixes the container size. After that we explicitly
+    // setView to pin the display, then capture whatever center/zoom Leaflet actually
+    // settled on — that becomes the canonical deselect-flyTo target.
+    setTimeout(() => {
+        leafletMap.invalidateSize();
+        leafletMap.setView(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, { animate: false });
+        DEFAULT_MAP_VIEW.center = leafletMap.getCenter();
+        DEFAULT_MAP_VIEW.zoom = leafletMap.getZoom();
+    }, 200);
 }
 
 function renderAllMapMarkers() {
@@ -891,6 +951,9 @@ function renderAllMapMarkers() {
 }
 
 function updateMapHighlights() {
+    const wasNodeCardOpen = !!selectedNodePubkey;
+    prevHighlightedSize = highlightedPeers.size;
+
     for (const [pk, marker] of Object.entries(mapMarkers)) {
         const isHL = highlightedPeers.has(pk);
         const peer = peers[pk];
@@ -909,6 +972,7 @@ function updateMapHighlights() {
         const pk = [...highlightedPeers][0];
         const peer = peers[pk];
         if (Number.isFinite(peer?.lat) && Number.isFinite(peer?.lon)) {
+            mapWasZoomedIn = true;
             leafletMap.flyTo([peer.lat, peer.lon], 5, { duration: 0.5 });
         }
     } else if (highlightedPeers.size > 1) {
@@ -918,12 +982,25 @@ function updateMapHighlights() {
             .filter(p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon))
             .map(p => [p.lat, p.lon]);
         if (coords.length > 1) {
-            leafletMap.flyToBounds(L.latLngBounds(coords).pad(0.3), { duration: 0.5 });
+            const bounds = L.latLngBounds(coords);
+            const targetZoom = leafletMap.getBoundsZoom(bounds.pad(0.3));
+            // Only fly if the bounds zoom is actually more zoomed in than default
+            if (targetZoom > DEFAULT_MAP_VIEW.zoom) {
+                mapWasZoomedIn = true;
+                leafletMap.flyToBounds(bounds.pad(0.3), { duration: 0.5 });
+            }
         } else if (coords.length === 1) {
+            mapWasZoomedIn = true;
             leafletMap.flyTo(coords[0], 5, { duration: 0.5 });
         }
-    } else if (leafletMap) {
-        leafletMap.flyTo(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, { duration: 0.5 });
+    } else if (leafletMap && mapWasZoomedIn) {
+        // Only zoom back out if the map actually flew somewhere
+        mapWasZoomedIn = false;
+        leafletMap.stop();
+        const snapToDefault = () => leafletMap.setView(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, { animate: false });
+        leafletMap.off("moveend", snapToDefault);
+        leafletMap.setView(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, { animate: true, duration: 0.8 });
+        leafletMap.once("moveend", snapToDefault);
     }
 }
 
@@ -954,12 +1031,21 @@ function updateMapForWavefront() {
 
 async function selectMessage(msg) {
     currentMsg = msg;
+    // Set channel filter only for channel_announcement; clear it for all other message types
+    selectedChannelScid = (msg?.type === "channel_announcement" && msg?.scid) ? String(msg.scid) : null;
 
     // Highlight active in list
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
     renderMessageList(replayFilterType);
     renderMessageIntel(msg);
     setMessageDetailMode(messageDetailMode);
+
+    // Update Q4 node list to show nodes in scope for this message — always go back to L1
+    const ctx = deriveNodeListFromMessage(msg);
+    renderNodeList(ctx);
+
+    // Update channel panel — filters to the selected channel when it's a channel_announcement
+    renderChannelsPanel();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1768,10 +1854,407 @@ function openThreatCard(threatData, totalFp) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  NODE INFO POPUP CARD
+//  Q4 — NODE DETAILS: 2-LAYER PANEL
 // ═══════════════════════════════════════════════════════════════
 
+// ── Helpers ─────────────────────────────────────────────────────
+
+function getTopPeersByScore(n = 30) {
+    return Object.keys(peers)
+        .sort((a, b) => (peers[a].avg_arrival_pct || 0) - (peers[b].avg_arrival_pct || 0))
+        .slice(0, n);
+}
+
+function getTopNodesByChannelActivity(scid, n = 30) {
+    // Invert nodeChannels: collect all nodes that have this scid, sorted by relay_messages desc
+    const entries = [];
+    for (const [pubkey, chs] of Object.entries(nodeChannels)) {
+        const match = chs.find(ch => ch.scid === scid);
+        if (match) entries.push({ pubkey, relay_messages: match.relay_messages || 0 });
+    }
+    entries.sort((a, b) => b.relay_messages - a.relay_messages);
+    return entries.slice(0, n).map(e => e.pubkey);
+}
+
+function deriveNodeListFromMessage(msg) {
+    if (!msg) return { pubkeys: [], label: "No message selected", source: "message" };
+    const set = new Set();
+
+    if (msg.type === "node_announcement") {
+        // For node announcements the subject IS the origin node — show it and highlight on map
+        if (msg.orig_node && peers[msg.orig_node]) set.add(msg.orig_node);
+        const label = `${msg.orig_node_alias || String(msg.hash).slice(0, 10)} · node announcement`;
+        return { pubkeys: [...set], label, source: "message" };
+    } else if (msg.scid) {
+        // For channel messages, show the top nodes by relay activity on this channel
+        const pubkeys = getTopNodesByChannelActivity(msg.scid, 30);
+        const label = `${formatMessageType(msg.type)} · ${msg.scid}`;
+        return { pubkeys, label, source: "channel" };
+    } else {
+        // Fallback: no scid available, show prompt
+        const label = `${formatMessageType(msg.type)} · ${String(msg.hash).slice(0, 10)}…`;
+        return { pubkeys: [], label, source: "none" };
+    }
+}
+
+function deriveNodeListFromChannel(scid) {
+    const pubkeys = getTopNodesByChannelActivity(scid, 30);
+    const label = `Channel ${scid}`;
+    return { pubkeys, label, source: "channel" };
+}
+
+// ── Layer 1: Node List ───────────────────────────────────────────
+
+function buildNodeCardHtml(pubkey, rank, fromSource) {
+    const peer = peers[pubkey] || {};
+    const isSuspect = (leaks.first_responders || []).some(fr => (fr.pubkey || "") === pubkey);
+    const fp = fpByPubkey[pubkey];
+    const isHighlighted = highlightedPeers.has(pubkey);
+
+    const alias = peer.alias || pubkey.slice(0, 14) + "…";
+    const msgsSeen = (peer.messages_seen || 0).toLocaleString();
+    const arrivalPct = ((peer.avg_arrival_pct || 0) * 100).toFixed(1);
+    const isTor = peer.is_tor;
+    const community = peer.community || null;
+    const communityColor = community ? getCommunityColor(community) : "#555";
+
+    // Bar: arrival percentile (lower = faster = better relay)
+    // We invert: 100 - pct so a fast node fills more of the bar
+    const barPct = Math.max(4, Math.min(100, (1 - (peer.avg_arrival_pct || 0.5)) * 100));
+
+    // Tags
+    const tags = [];
+    if (isSuspect) tags.push(`<span class="nd-node-tag tag-warn">⚡ fast relay</span>`);
+    if (isTor) tags.push(`<span class="nd-node-tag tag-purple">🧅 tor</span>`);
+    else if (peer.ip) tags.push(`<span class="nd-node-tag tag-good">🌐 clearnet</span>`);
+    if (fp) tags.push(`<span class="nd-node-tag tag-purple">🔬 fingerprinted</span>`);
+    if (community) tags.push(`<span class="nd-node-tag" style="border-color:${communityColor}40;color:${communityColor}">${escHtml(community)}</span>`);
+    const nodeChCount = (nodeChannels[pubkey] || []).length;
+    if (nodeChCount > 0) tags.push(`<span class="nd-node-tag tag-accent">${nodeChCount} ch</span>`);
+
+    const location = [peer.city, peer.country].filter(Boolean).join(", ");
+
+    return `
+    <div class="nd-node-card${isHighlighted ? " highlighted" : ""}" data-pubkey="${pubkey}">
+        <div class="nd-node-card-header">
+            <div class="nd-node-alias">${escHtml(alias)}</div>
+            <div class="nd-node-rank">#${rank}</div>
+        </div>
+        <div class="nd-node-meta">
+            ${msgsSeen} msgs seen · faster than ${(100 - parseFloat(arrivalPct)).toFixed(1)}% of network
+            ${location ? ` · ${escHtml(location)}` : ""}
+        </div>
+        <div class="nd-node-bars">
+            <div class="nd-node-bar-track">
+                <div class="nd-node-bar-fill" style="width:${barPct}%"></div>
+            </div>
+            <span class="nd-node-bar-label">relay speed ${barPct.toFixed(0)}%</span>
+        </div>
+        ${tags.length ? `<div class="nd-node-tags">${tags.join("")}</div>` : ""}
+    </div>`;
+}
+
+function renderNodeList(context) {
+    nodeListContext = context;
+    selectedNodePubkey = null;
+
+    const panel = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
+    if (!panel) return;
+
+    // "none" source = channel/update message selected, node list not applicable
+    if (context.source === "none") {
+        if (badge) badge.textContent = "select a node";
+        panel.innerHTML = `
+            <div class="nd-panel">
+                <div class="nd-list-layer">
+                    <div class="nd-context-bar"><strong>${escHtml(context.label)}</strong></div>
+                    <div class="nd-empty" style="padding:24px 16px;color:#444;font-size:10px;line-height:1.6">
+                        Click a node on the map or in the<br>Fast Relayers panel to inspect it.
+                    </div>
+                </div>
+            </div>`;
+        highlightedPeers.clear();
+        updateMapHighlights();
+        return;
+    }
+
+    let pubkeys = context.pubkeys;
+    // Fallback to global top peers only for global context
+    if (!pubkeys.length && context.source === "global") pubkeys = getTopPeersByScore(30);
+
+    // Sort by avg_arrival_pct ascending (fastest first)
+    pubkeys = pubkeys
+        .filter(pk => peers[pk])
+        .sort((a, b) => (peers[a].avg_arrival_pct || 1) - (peers[b].avg_arrival_pct || 1));
+
+    if (badge) badge.textContent = `${pubkeys.length} nodes`;
+
+    const contextLabel = context.label || "Nodes in scope";
+    const contextSubLabel = context.source === "message" ? "from selected message"
+        : context.source === "channel" ? "from selected channel"
+        : context.source === "global" ? "top relayers network-wide"
+        : "";
+
+    const cardsHtml = pubkeys.length
+        ? pubkeys.map((pk, i) => buildNodeCardHtml(pk, i + 1, context.source)).join("")
+        : `<div class="nd-empty">No mapped nodes in this context.<br><span style="font-size:9px;color:#333">Try selecting a message with wavefront data.</span></div>`;
+
+    panel.innerHTML = `
+        <div class="nd-panel">
+            <div class="nd-list-layer">
+                <div class="nd-context-bar">
+                    <strong>${escHtml(contextLabel)}</strong>
+                    ${contextSubLabel ? ` · ${escHtml(contextSubLabel)}` : ""}
+                    · click a card to inspect
+                </div>
+                <div class="nd-node-list" id="nd-node-list">
+                    ${cardsHtml}
+                </div>
+            </div>
+        </div>`;
+
+    // Wire clicks on node cards
+    panel.querySelectorAll(".nd-node-card").forEach(card => {
+        card.addEventListener("click", () => openNodeCard(card.dataset.pubkey));
+        card.addEventListener("mouseenter", () => showPeerTooltip(card.dataset.pubkey, card));
+        card.addEventListener("mouseleave", () => hideTooltip());
+    });
+
+    // Highlight on map only for message-scoped context (node_announcement origin)
+    // Global context never highlights — it's just a reference list
+    if (context.source === "message") {
+        highlightPeers(pubkeys);
+    } else {
+        highlightedPeers.clear();
+        updateMapHighlights();
+    }
+}
+
+// ── Layer 2: Node Detail ─────────────────────────────────────────
+
+function buildNodeDetailHtml(pubkey) {
+    const peer = peers[pubkey] || {};
+    const fp = fpByPubkey[pubkey];
+    const isSuspect = (leaks.first_responders || []).some(fr => (fr.pubkey || "") === pubkey);
+    const state = peerStates[pubkey] || {};
+    const colocGroups = (leaks.colocation || []).filter(cl =>
+        (cl.peers || []).some(p => (typeof p === "string" ? p : p.pubkey) === pubkey)
+    );
+
+    let html = `
+    <div class="nc-header" style="padding:12px 14px 10px">
+        <div class="nc-alias">${escHtml(peer.alias || "Unknown Node")}</div>
+    </div>
+    <div class="nc-pubkey" style="padding:0 14px;margin-top:4px;margin-bottom:6px">${pubkey}</div>
+
+    <div class="nc-section">
+        <div class="nc-section-title">Network Info</div>
+        <div class="nc-row">
+            <span class="nc-label">IP Address</span>
+            <span class="nc-val ${peer.is_tor ? "" : "nc-good"}">${peer.ip || "🧅 Tor-only"}</span>
+        </div>
+        ${peer.city || peer.country ? `<div class="nc-row">
+            <span class="nc-label">Location</span>
+            <span class="nc-val">${escHtml([peer.city, peer.country].filter(Boolean).join(", "))}</span>
+        </div>` : ""}
+        ${peer.isp ? `<div class="nc-row">
+            <span class="nc-label">ISP</span>
+            <span class="nc-val">${escHtml(peer.isp)}</span>
+        </div>` : ""}
+        ${peer.as_info ? `<div class="nc-row">
+            <span class="nc-label">AS</span>
+            <span class="nc-val">${escHtml(peer.as_info)}</span>
+        </div>` : ""}
+        <div class="nc-row">
+            <span class="nc-label">Community</span>
+            <span class="nc-val">${escHtml(peer.community || "unknown")}</span>
+        </div>
+    </div>
+
+    <div class="nc-section">
+        <div class="nc-section-title">Gossip Propagation</div>
+        <div class="nc-row">
+            <span class="nc-label">Avg Arrival Percentile</span>
+            <span class="nc-val">${((peer.avg_arrival_pct || 0) * 100).toFixed(1)}%</span>
+        </div>
+        <div class="nc-row">
+            <span class="nc-label">Median Arrival Percentile</span>
+            <span class="nc-val">${((peer.median_arrival_pct || 0) * 100).toFixed(1)}%</span>
+        </div>
+        <div class="nc-row">
+            <span class="nc-label">Messages Seen</span>
+            <span class="nc-val">${(peer.messages_seen || 0).toLocaleString()}</span>
+        </div>
+        ${peer.top5_pct !== undefined ? `<div class="nc-row">
+            <span class="nc-label">Top-5% Arrivals</span>
+            <span class="nc-val">${(peer.top5_pct || 0).toFixed(1)}%</span>
+        </div>` : ""}
+        ${peer.first_pct !== undefined ? `<div class="nc-row">
+            <span class="nc-label">First Arrivals</span>
+            <span class="nc-val">${(peer.first_pct || 0).toFixed(1)}%</span>
+        </div>` : ""}
+        ${state.delay !== undefined && state.delay < Infinity ? `<div class="nc-row">
+            <span class="nc-label">Current Message Delay</span>
+            <span class="nc-val">+${state.delay.toFixed(0)} ms</span>
+        </div>` : ""}
+    </div>`;
+
+    if (isSuspect) {
+        html += `
+    <div class="nc-section">
+        <div class="nc-section-title" style="color:#e63946">⚠ Fast Relay Heuristic</div>
+        <div class="nc-row">
+            <span class="nc-label">Signal</span>
+            <span class="nc-val nc-warn">Consistently early relay timing — potential privileged connectivity</span>
+        </div>
+    </div>`;
+    }
+
+    if (colocGroups.length > 0) {
+        html += `<div class="nc-section">
+        <div class="nc-section-title" style="color:#e9c46a">📍 Co-Location Signals (/24)</div>`;
+        for (const cl of colocGroups) {
+            const others = (cl.peers || [])
+                .map(p => typeof p === "string" ? p : p.pubkey)
+                .filter(pk => pk !== pubkey);
+            const othersHtml = others.map(pk => {
+                const a = peers[pk]?.alias || pk.slice(0, 12) + "…";
+                return `<span class="nc-feat-tag" style="cursor:pointer;background:#e9c46a15;color:#e9c46a;border-color:#e9c46a30" data-card-peer="${pk}">${escHtml(a)}</span>`;
+            }).join("");
+            html += `<div style="margin-bottom:6px">
+            <div style="font-size:10px;color:#e9c46a;font-weight:bold">${cl.prefix || "?"} <span style="color:#888;font-weight:normal">(${cl.count || others.length + 1} nodes)</span></div>
+            <div class="nc-features" style="margin-top:3px">${othersHtml}</div>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+
+    if (fp) {
+        const known = fp.feature_names.filter(n => !n.startsWith("unknown_bit_"));
+        const unknown = fp.feature_names.filter(n => n.startsWith("unknown_bit_"));
+        const totalNodes = fingerprints.total_nodes_parsed || 5736;
+        const groupPct = ((fp.group_size / totalNodes) * 100).toFixed(1);
+        html += `
+    <div class="nc-section">
+        <div class="nc-section-title" style="color:#a855f7">🔬 Implementation Fingerprint</div>
+        <div class="nc-row">
+            <span class="nc-label">Feature Count</span>
+            <span class="nc-val">${fp.feature_names.length} features</span>
+        </div>
+        <div class="nc-row">
+            <span class="nc-label">Fingerprint Group</span>
+            <span class="nc-val">${fp.group_size.toLocaleString()} nodes (${groupPct}%)</span>
+        </div>
+        <div class="nc-fingerprint-bar">
+            <div class="nc-fp-track"><div class="nc-fp-fill" style="width:${groupPct}%"></div></div>
+            <div class="nc-fp-label">${fp.group_size === 1 ? "Unique — only node with this exact feature set" : fp.group_size <= 10 ? "Rare fingerprint" : fp.group_size <= 100 ? "Uncommon fingerprint" : "Common fingerprint"}</div>
+        </div>
+        <div style="margin-top:8px">
+            <div style="font-size:9px;color:#666;margin-bottom:4px">Known Features (${known.length})</div>
+            <div class="nc-features">${known.map(f => `<span class="nc-feat-tag known">${f.replace(/_/g, " ")}</span>`).join("")}</div>
+        </div>
+        ${unknown.length ? `<div style="margin-top:6px">
+            <div style="font-size:9px;color:#666;margin-bottom:4px">Unknown Bits (${unknown.length})</div>
+            <div class="nc-features">${unknown.map(f => `<span class="nc-feat-tag unknown">${f}</span>`).join("")}</div>
+        </div>` : ""}
+    </div>`;
+    } else {
+        html += `
+    <div class="nc-section">
+        <div class="nc-section-title" style="color:#a855f7">🔬 Implementation Fingerprint</div>
+        <div style="font-size:10px;color:#555;font-style:italic">No fingerprint data available for this peer</div>
+    </div>`;
+    }
+
+    return html;
+}
+
 function openNodeCard(pubkey) {
+    if (!peers[pubkey]) return;
+    selectedNodePubkey = pubkey;
+    const peer = peers[pubkey];
+    const panel = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
+    if (!panel) return;
+
+    const hasListContext = nodeListContext.pubkeys.length > 0;
+
+    panel.innerHTML = `
+        <div class="nd-panel">
+            <div class="nd-detail-layer">
+                <div class="nd-detail-topbar">
+                    ${hasListContext
+                        ? `<button class="nd-back-btn" id="nd-back-btn">← List</button>`
+                        : `<button class="nd-back-btn" id="nd-back-btn">← All</button>`}
+                    <div class="nd-detail-alias">${escHtml(peer.alias || pubkey.slice(0, 16) + "…")}</div>
+                </div>
+                <div class="nd-detail-scroll" id="nd-detail-scroll">
+                    ${buildNodeDetailHtml(pubkey)}
+                </div>
+            </div>
+        </div>`;
+
+    if (badge) badge.textContent = peer.alias || pubkey.slice(0, 10) + "…";
+
+    // Back button
+    document.getElementById("nd-back-btn").addEventListener("click", () => {
+        selectedNodePubkey = null;
+        if (nodeListContext.pubkeys.length) {
+            renderNodeList(nodeListContext);
+        } else {
+            renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+        }
+    });
+
+    // Co-location peer chips
+    panel.querySelectorAll("[data-card-peer]").forEach(el => {
+        el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openNodeCard(el.dataset.cardPeer);
+        });
+    });
+
+    highlightPeer(pubkey);
+    renderChannelsPanel();
+}
+
+function closeNodeCard() {
+    selectedNodePubkey = null;
+    renderNodeList(nodeListContext.pubkeys.length
+        ? nodeListContext
+        : { pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" }
+    );
+    renderChannelsPanel();
+}
+
+function renderNodeDetailsPlaceholder() {
+    // Don't overwrite if we're in Layer 2
+    if (selectedNodePubkey && peers[selectedNodePubkey]) return;
+
+    const panel = document.getElementById("node-details-panel");
+    const badge = document.getElementById("node-details-badge");
+    if (!panel) return;
+
+    // If there's already a rendered list (nd-panel present), just update highlights in it
+    if (panel.querySelector(".nd-node-list")) {
+        panel.querySelectorAll(".nd-node-card").forEach(card => {
+            card.classList.toggle("highlighted", highlightedPeers.has(card.dataset.pubkey));
+        });
+        return;
+    }
+
+    // Initial render: show global top relayers
+    const ctx = nodeListContext.pubkeys.length
+        ? nodeListContext
+        : { pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" };
+    renderNodeList(ctx);
+    if (badge) badge.textContent = `${ctx.pubkeys.length || 30} nodes`;
+}
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeNodeCard();
+});
     selectedNodePubkey = pubkey;
     const peer = peers[pubkey] || {};
     const fp = fpByPubkey[pubkey];
@@ -1925,53 +2408,6 @@ function openNodeCard(pubkey) {
     card.style.padding = "0";
     card.style.alignItems = "initial";
     card.style.justifyContent = "initial";
-    card.style.color = "inherit";
-    card.style.fontSize = "inherit";
-    card.style.textAlign = "initial";
-    card.innerHTML = html;
-    if (badge) badge.textContent = peer.alias || pubkey.slice(0, 10) + "…";
-
-    // Wire close button
-    document.getElementById("nc-close-btn").addEventListener("click", closeNodeCard);
-
-    // Click on co-location signal peer chip → open that peer's card
-    card.querySelectorAll("[data-card-peer]").forEach(el => {
-        el.addEventListener("click", (e) => {
-            e.stopPropagation();
-            openNodeCard(el.dataset.cardPeer);
-        });
-    });
-
-    // Highlight this peer across all panels
-    highlightPeer(pubkey);
-}
-
-function closeNodeCard() {
-    selectedNodePubkey = null;
-    renderNodeDetailsPlaceholder();
-}
-
-function renderNodeDetailsPlaceholder() {
-    const card = document.getElementById("node-details-panel");
-    const badge = document.getElementById("node-details-badge");
-    if (!card) return;
-    if (selectedNodePubkey && peers[selectedNodePubkey]) return;
-
-    if (badge) badge.textContent = "Select a node";
-    card.style.display = "flex";
-    card.style.alignItems = "center";
-    card.style.justifyContent = "center";
-    card.style.padding = "24px";
-    card.style.color = "#666";
-    card.style.fontSize = "12px";
-    card.style.textAlign = "center";
-    card.innerHTML = "Select a node";
-}
-
-document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeNodeCard();
-});
-
 // ═══════════════════════════════════════════════════════════════
 //  UTILITIES
 // ═══════════════════════════════════════════════════════════════
