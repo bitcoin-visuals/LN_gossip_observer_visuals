@@ -240,9 +240,11 @@ window.addEventListener("load", async () => {
     if (initialMessage) {
         await selectMessage(initialMessage);
         // Don't let the auto-selected message filter the channels panel on load —
-        // the user hasn't made a deliberate selection yet
+        // the user hasn't made a deliberate selection yet; reset everything to general
         selectedChannelScid = null;
         currentMsg = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
         renderChannelsPanel();
         updateContextBar();
     }
