@@ -154,6 +154,50 @@ let currentWavefront = [];
 let nodeListContext = { pubkeys: [], label: "All nodes", source: "global" }; // Layer 1 context
 let selectedChannelScid = null;     // set when a channel_announcement message is selected; drives channel panel filter
 
+// ═══════════════════════════════════════════════════════════════
+//  CONTEXT DRIVER — single source-of-truth for "what is active"
+// ═══════════════════════════════════════════════════════════════
+//  Driver priority: node > channel > message > general
+//  A "driver" is the specific entity the user is currently focused on.
+//  Driver types: "node" | "channel" | "message" | "general"
+
+function getContextDriver() {
+    // Node is highest priority — it's an explicit Layer 2 drill-down
+    if (selectedNodePubkey && peers[selectedNodePubkey]) {
+        const alias = peers[selectedNodePubkey]?.alias;
+        const id = alias || (selectedNodePubkey.slice(0, 12) + "…");
+        return { type: "node", id };
+    }
+    // Channel SCID — set when channel_announcement selected or channel card clicked in Q3
+    if (selectedChannelScid) {
+        return { type: "channel", id: String(selectedChannelScid) };
+    }
+    // Message — any message selected in Q1 (incl. node_announcement, channel_update)
+    if (currentMsg) {
+        const msgType = currentMsg.type || "msg";
+        const shortType = msgType === "channel_announcement" ? "CA"
+            : msgType === "channel_update" ? "CU"
+            : msgType === "node_announcement" ? "NA"
+            : msgType.slice(0, 4).toUpperCase();
+        const id = currentMsg.scid
+            ? `${shortType} · ${currentMsg.scid}`
+            : `${shortType} · ${String(currentMsg.hash || "").slice(0, 10)}…`;
+        return { type: "message", id };
+    }
+    return { type: "general", id: "GENERAL" };
+}
+
+function updateContextBar() {
+    const typeEl = document.getElementById("ctx-driver-type");
+    const idEl   = document.getElementById("ctx-driver-id");
+    if (!typeEl || !idEl) return;
+    const { type, id } = getContextDriver();
+    typeEl.className = `ctx-driver-type type-${type}`;
+    typeEl.textContent = type;
+    idEl.className = `ctx-driver-id id-${type}`;
+    idEl.textContent = id;
+}
+
 // ─── Animation ──────────────────────────────────────────────────
 let animFrame = null;
 let animStart = null;
@@ -198,7 +242,9 @@ window.addEventListener("load", async () => {
         // Don't let the auto-selected message filter the channels panel on load —
         // the user hasn't made a deliberate selection yet
         selectedChannelScid = null;
+        currentMsg = null;
         renderChannelsPanel();
+        updateContextBar();
     }
 });
 
@@ -550,7 +596,9 @@ function renderMessageList(filterType) {
     // If the filter type is changing, the previously selected message is no longer in context
     if (normalizedFilterType !== replayFilterType) {
         selectedChannelScid = null;
+        currentMsg = null;
         renderChannelsPanel();
+        updateContextBar();
     }
     replayFilterType = normalizedFilterType;
     const universe = messageIntel.length ? messageIntel : messageCatalog;
@@ -692,9 +740,11 @@ function clearHighlight() {
     highlightedPeers.clear();
     selectedNodePubkey = null;
     selectedChannelScid = null;
+    currentMsg = null;
     updateAllHighlights();
     // Reset node list to global top relayers when map is clicked
     renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+    updateContextBar();
 }
 
 function clearPeerHighlight({ preserveSelectedNode = false } = {}) {
@@ -870,6 +920,7 @@ function renderChannelsPanel() {
             } else {
                 renderNodeList(ctx);
             }
+            updateContextBar();
         });
     });
 
@@ -1046,6 +1097,7 @@ async function selectMessage(msg) {
 
     // Update channel panel — filters to the selected channel when it's a channel_announcement
     renderChannelsPanel();
+    updateContextBar();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2205,6 +2257,7 @@ function openNodeCard(pubkey) {
         } else {
             renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
         }
+        updateContextBar();
     });
 
     // Co-location peer chips
@@ -2217,6 +2270,7 @@ function openNodeCard(pubkey) {
 
     highlightPeer(pubkey);
     renderChannelsPanel();
+    updateContextBar();
 }
 
 function closeNodeCard() {
@@ -2226,6 +2280,7 @@ function closeNodeCard() {
         : { pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" }
     );
     renderChannelsPanel();
+    updateContextBar();
 }
 
 function renderNodeDetailsPlaceholder() {
