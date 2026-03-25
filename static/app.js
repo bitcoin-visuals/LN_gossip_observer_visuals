@@ -647,6 +647,8 @@ function renderMessageList(filterType) {
     const universe = messageIntel.length ? messageIntel : messageCatalog;
     const filtered = (normalizedFilterType === "all" ? universe : universe.filter(m => m.type === normalizedFilterType))
         .filter(m => {
+            // In node context: only show messages originated by that node
+            if (selectedNodePubkey && m.orig_node !== selectedNodePubkey) return false;
             if (!replaySearchText) return true;
             return [m.hash, m.scid, m.orig_node, m.type]
                 .filter(Boolean)
@@ -786,6 +788,7 @@ function clearHighlight() {
     currentMsg = null;
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
     renderMessageIntel(null);
+    renderMessageList(replayFilterType);
     updateAllHighlights();
     // Reset node list to global top relayers when map is clicked
     renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
@@ -2315,6 +2318,7 @@ function openNodeCard(pubkey) {
         } else {
             renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
         }
+        renderMessageList(replayFilterType);
         updateContextBar();
     });
 
@@ -2327,6 +2331,7 @@ function openNodeCard(pubkey) {
     });
 
     highlightPeer(pubkey);
+    renderMessageList(replayFilterType);
     renderChannelsPanel();
     updateContextBar();
 }
