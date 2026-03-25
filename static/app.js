@@ -153,6 +153,7 @@ let currentMsg = null;
 let currentWavefront = [];
 let nodeListContext = { pubkeys: [], label: "All nodes", source: "global" }; // Layer 1 context
 let selectedChannelScid = null;     // set when a channel_announcement message is selected; drives channel panel filter
+let channelHeatmap = new Map();     // pubkey → 0–1 normalised relay score for active channel context
 
 // ═══════════════════════════════════════════════════════════════
 //  CONTEXT DRIVER — single source-of-truth for "what is active"
@@ -232,7 +233,7 @@ let mapMarkers = {};          // pubkey → L.circleMarker
 let mapHighlightLayer = null;
 let selectedNodePubkey = null;
 const DEFAULT_MAP_VIEW = {
-    center: [25, 15],
+    center: [25, 0],
     zoom: 2,
 };
 
@@ -783,6 +784,7 @@ function highlightPeers(pubkeys) {
 
 function clearHighlight() {
     highlightedPeers.clear();
+    channelHeatmap.clear();
     selectedNodePubkey = null;
     selectedChannelScid = null;
     currentMsg = null;
@@ -965,6 +967,9 @@ function renderChannelsPanel() {
             // Clicking a channel always exits node context — channel is the new driver
             selectedNodePubkey = null;
             selectedChannelScid = scid;
+            // Build heatmap for this channel and apply to map
+            channelHeatmap = buildChannelHeatmap(scid);
+            updateMapHighlights();
             // Mark this card as active, clear others
             root.querySelectorAll(".channel-card").forEach(c => c.classList.remove("active"));
             card.classList.add("active");
@@ -1013,9 +1018,13 @@ function initMap() {
         zoom: DEFAULT_MAP_VIEW.zoom,
         zoomControl: false,
         attributionControl: false,
+        minZoom: 2,
+        maxBounds: [[-90, -180], [90, 180]],
+        maxBoundsViscosity: 1.0,
     });
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
         maxZoom: 18,
+        noWrap: true,
     }).addTo(leafletMap);
     L.control.zoom({ position: "bottomright" }).addTo(leafletMap);
     leafletMap.on("click", () => clearHighlight());
@@ -1063,6 +1072,33 @@ function renderAllMapMarkers() {
 function updateMapHighlights() {
     const wasNodeCardOpen = !!selectedNodePubkey;
     prevHighlightedSize = highlightedPeers.size;
+
+    // Channel heatmap mode: colour each marker by relay activity on the selected channel
+    if (channelHeatmap.size > 0) {
+        for (const [pk, marker] of Object.entries(mapMarkers)) {
+            const score = channelHeatmap.get(pk);
+            if (score !== undefined) {
+                const color = heatmapColor(score);
+                marker.setStyle({
+                    radius: 4 + score * 6,   // 4px (cold) → 10px (hot)
+                    fillColor: color,
+                    color: color,
+                    fillOpacity: 0.3 + score * 0.7,
+                    weight: 1,
+                });
+                marker.bringToFront();
+            } else {
+                marker.setStyle({
+                    radius: 3,
+                    fillColor: "#1a1a2e",
+                    color: "#0a0a0f",
+                    fillOpacity: 0.08,
+                    weight: 0,
+                });
+            }
+        }
+        return;  // skip normal highlight / flyTo logic in heatmap mode
+    }
 
     for (const [pk, marker] of Object.entries(mapMarkers)) {
         const isHL = highlightedPeers.has(pk);
@@ -1146,6 +1182,16 @@ async function selectMessage(msg) {
         (msg?.type === "channel_announcement" || msg?.type === "channel_update") && msg?.scid
     ) ? String(msg.scid) : null;
 
+    // Build channel heatmap for CA/CU messages; clear for others
+    channelHeatmap = selectedChannelScid ? buildChannelHeatmap(selectedChannelScid) : new Map();
+    updateAllHighlights();
+
+    // For node_announcement: drive Q3 channel filter by the originating node,
+    // same as clicking the node card — but without opening the node detail panel
+    selectedNodePubkey = (msg?.type === "node_announcement" && msg?.orig_node && peers[msg.orig_node])
+        ? msg.orig_node
+        : null;
+
     // Highlight active in list
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
     renderMessageList(replayFilterType);
@@ -1155,8 +1201,13 @@ async function selectMessage(msg) {
     // Update Q4 node list to show nodes in scope for this message — always go back to L1
     const ctx = deriveNodeListFromMessage(msg);
     renderNodeList(ctx);
+    // renderNodeList always resets selectedNodePubkey — restore it for node_announcement
+    // so that renderChannelsPanel below can filter Q3 to this node's channels
+    if (msg?.type === "node_announcement" && msg?.orig_node && peers[msg.orig_node]) {
+        selectedNodePubkey = msg.orig_node;
+    }
 
-    // Update channel panel — filters to the selected channel when it's a channel_announcement
+    // Update channel panel — filters to the selected channel (CA/CU) or node's channels (NA)
     renderChannelsPanel();
     updateContextBar();
 }
@@ -1987,6 +2038,47 @@ function getTopNodesByChannelActivity(scid, n = 30) {
     }
     entries.sort((a, b) => b.relay_messages - a.relay_messages);
     return entries.slice(0, n).map(e => e.pubkey);
+}
+
+// Build a pubkey→normalised-score (0–1) heatmap for a channel scid.
+// Score = relay_messages for that node on that channel, normalised to [0,1] vs the max.
+// Returns a Map. Empty map if no data.
+function buildChannelHeatmap(scid) {
+    const entries = [];
+    for (const [pubkey, chs] of Object.entries(nodeChannels)) {
+        const match = chs.find(ch => ch.scid === scid);
+        if (match) {
+            const score = (match.relay_messages || 0) + (match.origin_messages || 0);
+            if (score > 0) entries.push({ pubkey, score });
+        }
+    }
+    if (!entries.length) return new Map();
+    const max = Math.max(...entries.map(e => e.score));
+    const map = new Map();
+    for (const e of entries) map.set(e.pubkey, e.score / max);
+    return map;
+}
+
+// Map a normalised 0–1 value to a heatmap colour:
+// 0 (cold/low) → deep blue → cyan → yellow → 1 (hot/high) → red
+function heatmapColor(t) {
+    // 4-stop gradient: blue(0) → cyan(0.33) → yellow(0.66) → red(1)
+    const stops = [
+        [0,   [20,  20,  180]],
+        [0.33,[0,   210, 210]],
+        [0.66,[240, 210, 0  ]],
+        [1,   [255, 60,  0  ]],
+    ];
+    let lo = stops[0], hi = stops[stops.length - 1];
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (t >= stops[i][0] && t <= stops[i + 1][0]) { lo = stops[i]; hi = stops[i + 1]; break; }
+    }
+    const range = hi[0] - lo[0];
+    const f = range > 0 ? (t - lo[0]) / range : 0;
+    const r = Math.round(lo[1][0] + f * (hi[1][0] - lo[1][0]));
+    const g = Math.round(lo[1][1] + f * (hi[1][1] - lo[1][1]));
+    const b = Math.round(lo[1][2] + f * (hi[1][2] - lo[1][2]));
+    return `rgb(${r},${g},${b})`;
 }
 
 function deriveNodeListFromMessage(msg) {
