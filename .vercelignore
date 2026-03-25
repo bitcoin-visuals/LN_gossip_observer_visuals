@@ -1,0 +1,22 @@
+# Never needed at runtime
+static/data/message_participants.json
+static/data/OLD_wavefronts/
+
+# Force-include files that are gitignored but needed at runtime
+!static/data/message_intel.json
+
+# Raw source data — not served to the browser
+data/
+
+# Python tooling
+.venv/
+*.py
+pyproject.toml
+
+# Dev/repo artifacts
+.git/
+.gitignore
+README.md
+context.md
+SPEAKER_NOTES.md
+static/SPEAKER_NOTES.md

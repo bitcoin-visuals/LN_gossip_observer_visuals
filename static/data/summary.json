@@ -7,7 +7,7 @@
   "collection_duration_hours": 23.5,
   "total_channels_indexed": 250,
   "nodes_with_channels": 977,
-  "global_scoped_messages": 47983,
+  "global_scoped_messages": 75172,
   "global_scoped_peers": 977,
   "msg_types": {
     "1": "channel_announcement",

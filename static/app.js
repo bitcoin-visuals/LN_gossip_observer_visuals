@@ -153,7 +153,9 @@ let currentMsg = null;
 let currentWavefront = [];
 let nodeListContext = { pubkeys: [], label: "All nodes", source: "global" }; // Layer 1 context
 let selectedChannelScid = null;     // set when a channel_announcement message is selected; drives channel panel filter
-let channelHeatmap = new Map();     // pubkey → 0–1 normalised relay score for active channel context
+// pubkey → opacity [0.1–1.0] based on relay_messages for the selected channel.
+// Only populated in channel context; empty map = no channel dimming active.
+let peerChannelStrength = new Map();
 
 // ═══════════════════════════════════════════════════════════════
 //  CONTEXT DRIVER — single source-of-truth for "what is active"
@@ -260,10 +262,15 @@ window.addEventListener("load", async () => {
         // Don't let the auto-selected message filter the channels panel on load —
         // the user hasn't made a deliberate selection yet; reset everything to general
         selectedChannelScid = null;
+        selectedNodePubkey = null;
         currentMsg = null;
+        peerChannelStrength = new Map();
         document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
         renderMessageIntel(null);
+        renderMessageList(replayFilterType);
         renderChannelsPanel();
+        renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+        updateAllHighlights();
         updateContextBar();
     }
 });
@@ -650,6 +657,8 @@ function renderMessageList(filterType) {
         .filter(m => {
             // In node context: only show messages originated by that node
             if (selectedNodePubkey && m.orig_node !== selectedNodePubkey) return false;
+            // In channel context: only show CA/CU messages for that channel
+            if (selectedChannelScid && String(m.scid) !== String(selectedChannelScid)) return false;
             if (!replaySearchText) return true;
             return [m.hash, m.scid, m.orig_node, m.type]
                 .filter(Boolean)
@@ -784,10 +793,10 @@ function highlightPeers(pubkeys) {
 
 function clearHighlight() {
     highlightedPeers.clear();
-    channelHeatmap.clear();
     selectedNodePubkey = null;
     selectedChannelScid = null;
     currentMsg = null;
+    peerChannelStrength = new Map();
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
     renderMessageIntel(null);
     renderMessageList(replayFilterType);
@@ -967,9 +976,7 @@ function renderChannelsPanel() {
             // Clicking a channel always exits node context — channel is the new driver
             selectedNodePubkey = null;
             selectedChannelScid = scid;
-            // Build heatmap for this channel and apply to map
-            channelHeatmap = buildChannelHeatmap(scid);
-            updateMapHighlights();
+            computeChannelStrength(scid);
             // Mark this card as active, clear others
             root.querySelectorAll(".channel-card").forEach(c => c.classList.remove("active"));
             card.classList.add("active");
@@ -977,6 +984,8 @@ function renderChannelsPanel() {
             renderNodeList(ctx);
             // Re-render Q3 so it switches out of node mode into channel/global mode
             renderChannelsPanel();
+            renderMessageList(replayFilterType);
+            updateMapHighlights();
             updateContextBar();
         });
     });
@@ -1073,44 +1082,34 @@ function updateMapHighlights() {
     const wasNodeCardOpen = !!selectedNodePubkey;
     prevHighlightedSize = highlightedPeers.size;
 
-    // Channel heatmap mode: colour each marker by relay activity on the selected channel
-    if (channelHeatmap.size > 0) {
-        for (const [pk, marker] of Object.entries(mapMarkers)) {
-            const score = channelHeatmap.get(pk);
-            if (score !== undefined) {
-                const color = heatmapColor(score);
-                marker.setStyle({
-                    radius: 4 + score * 6,   // 4px (cold) → 10px (hot)
-                    fillColor: color,
-                    color: color,
-                    fillOpacity: 0.3 + score * 0.7,
-                    weight: 1,
-                });
-                marker.bringToFront();
-            } else {
-                marker.setStyle({
-                    radius: 3,
-                    fillColor: "#1a1a2e",
-                    color: "#0a0a0f",
-                    fillOpacity: 0.08,
-                    weight: 0,
-                });
-            }
-        }
-        return;  // skip normal highlight / flyTo logic in heatmap mode
-    }
+    // Channel-strength mode: graduated opacity by relay_messages for selected channel.
+    // Takes priority over binary highlight when peerChannelStrength is populated
+    // and no peer highlight (node/wavefront) is active.
+    const useChannelStrength = peerChannelStrength.size > 0 && highlightedPeers.size === 0;
 
     for (const [pk, marker] of Object.entries(mapMarkers)) {
         const isHL = highlightedPeers.has(pk);
         const peer = peers[pk];
         const baseColor = getCommunityColor(peer?.community);
-        marker.setStyle({
-            radius: isHL ? 8 : 4,
-            fillColor: isHL ? "#ff6b35" : baseColor,
-            color: isHL ? "#ff6b35" : "#0a0a0f",
-            fillOpacity: highlightedPeers.size === 0 ? 0.7 : (isHL ? 1 : 0.15),
-            weight: isHL ? 2 : 1,
-        });
+
+        if (useChannelStrength) {
+            const opacity = peerChannelStrength.get(pk) ?? 0.08;
+            marker.setStyle({
+                radius: opacity > 0.5 ? 5 : 4,
+                fillColor: baseColor,
+                color: "#0a0a0f",
+                fillOpacity: opacity,
+                weight: 1,
+            });
+        } else {
+            marker.setStyle({
+                radius: isHL ? 8 : 4,
+                fillColor: isHL ? "#ff6b35" : baseColor,
+                color: isHL ? "#ff6b35" : "#0a0a0f",
+                fillOpacity: highlightedPeers.size === 0 ? 0.7 : (isHL ? 1 : 0.15),
+                weight: isHL ? 2 : 1,
+            });
+        }
         if (isHL) marker.bringToFront();
     }
     // If single peer highlighted with coords, pan to it
@@ -1181,10 +1180,8 @@ async function selectMessage(msg) {
     selectedChannelScid = (
         (msg?.type === "channel_announcement" || msg?.type === "channel_update") && msg?.scid
     ) ? String(msg.scid) : null;
-
-    // Build channel heatmap for CA/CU messages; clear for others
-    channelHeatmap = selectedChannelScid ? buildChannelHeatmap(selectedChannelScid) : new Map();
-    updateAllHighlights();
+    // Graduated map dimming by relay strength for the selected channel
+    computeChannelStrength(selectedChannelScid);
 
     // For node_announcement: drive Q3 channel filter by the originating node,
     // same as clicking the node card — but without opening the node detail panel
@@ -2040,47 +2037,6 @@ function getTopNodesByChannelActivity(scid, n = 30) {
     return entries.slice(0, n).map(e => e.pubkey);
 }
 
-// Build a pubkey→normalised-score (0–1) heatmap for a channel scid.
-// Score = relay_messages for that node on that channel, normalised to [0,1] vs the max.
-// Returns a Map. Empty map if no data.
-function buildChannelHeatmap(scid) {
-    const entries = [];
-    for (const [pubkey, chs] of Object.entries(nodeChannels)) {
-        const match = chs.find(ch => ch.scid === scid);
-        if (match) {
-            const score = (match.relay_messages || 0) + (match.origin_messages || 0);
-            if (score > 0) entries.push({ pubkey, score });
-        }
-    }
-    if (!entries.length) return new Map();
-    const max = Math.max(...entries.map(e => e.score));
-    const map = new Map();
-    for (const e of entries) map.set(e.pubkey, e.score / max);
-    return map;
-}
-
-// Map a normalised 0–1 value to a heatmap colour:
-// 0 (cold/low) → deep blue → cyan → yellow → 1 (hot/high) → red
-function heatmapColor(t) {
-    // 4-stop gradient: blue(0) → cyan(0.33) → yellow(0.66) → red(1)
-    const stops = [
-        [0,   [20,  20,  180]],
-        [0.33,[0,   210, 210]],
-        [0.66,[240, 210, 0  ]],
-        [1,   [255, 60,  0  ]],
-    ];
-    let lo = stops[0], hi = stops[stops.length - 1];
-    for (let i = 0; i < stops.length - 1; i++) {
-        if (t >= stops[i][0] && t <= stops[i + 1][0]) { lo = stops[i]; hi = stops[i + 1]; break; }
-    }
-    const range = hi[0] - lo[0];
-    const f = range > 0 ? (t - lo[0]) / range : 0;
-    const r = Math.round(lo[1][0] + f * (hi[1][0] - lo[1][0]));
-    const g = Math.round(lo[1][1] + f * (hi[1][1] - lo[1][1]));
-    const b = Math.round(lo[1][2] + f * (hi[1][2] - lo[1][2]));
-    return `rgb(${r},${g},${b})`;
-}
-
 function deriveNodeListFromMessage(msg) {
     if (!msg) return { pubkeys: [], label: "No message selected", source: "message" };
     const set = new Set();
@@ -2106,6 +2062,36 @@ function deriveNodeListFromChannel(scid) {
     const pubkeys = getTopNodesByChannelActivity(scid, 30);
     const label = `Channel ${scid}`;
     return { pubkeys, label, source: "channel" };
+}
+
+// Build peerChannelStrength for a given scid:
+// Iterates nodeChannels to find every node that relayed this channel,
+// then normalises relay_messages to [0.1, 1.0] opacity with a sqrt scale
+// so mid-range nodes are visually distinct (not all collapsed to near-zero).
+// Nodes with no data for this channel get opacity MIN_CHANNEL_OPACITY.
+function computeChannelStrength(scid) {
+    peerChannelStrength = new Map();
+    if (!scid) return;
+    const MIN_OPACITY = 0.04;
+    const MAX_OPACITY = 1.0;
+
+    // Gather relay_messages per node for this scid
+    const raw = [];
+    for (const [pk, chans] of Object.entries(nodeChannels)) {
+        const ch = chans.find(c => c.scid === scid);
+        if (ch && (ch.relay_messages || 0) > 0) {
+            raw.push({ pk, v: ch.relay_messages });
+        }
+    }
+    if (!raw.length) return;
+
+    const maxV = Math.max(...raw.map(r => r.v));
+    for (const { pk, v } of raw) {
+        // power-1.8 curve: steeper than sqrt — most nodes stay very dim, top nodes stay bright
+        const norm = Math.pow(v / maxV, 1.8);
+        const opacity = MIN_OPACITY + norm * (MAX_OPACITY - MIN_OPACITY);
+        peerChannelStrength.set(pk, opacity);
+    }
 }
 
 // ── Layer 1: Node List ───────────────────────────────────────────

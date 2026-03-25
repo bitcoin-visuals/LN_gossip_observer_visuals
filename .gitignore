@@ -53,3 +53,4 @@ static/data/channel_scope_summary.json
 static/data/summary.json
 static/data/leaks.json
 static/data/fingerprints.json
+.vercel
