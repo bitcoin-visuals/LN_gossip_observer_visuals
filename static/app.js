@@ -154,6 +154,67 @@ let currentWavefront = [];
 let nodeListContext = { pubkeys: [], label: "All nodes", source: "global" }; // Layer 1 context
 let selectedChannelScid = null;     // set when a channel_announcement message is selected; drives channel panel filter
 
+// ═══════════════════════════════════════════════════════════════
+//  CONTEXT DRIVER — single source-of-truth for "what is active"
+// ═══════════════════════════════════════════════════════════════
+//  Driver priority: node > channel > message > general
+//  A "driver" is the specific entity the user is currently focused on.
+//  Driver types: "node" | "channel" | "message" | "general"
+
+function getContextDriver() {
+    // Node is highest priority — it's an explicit Layer 2 drill-down
+    if (selectedNodePubkey && peers[selectedNodePubkey]) {
+        const alias = peers[selectedNodePubkey]?.alias;
+        const id = alias || (selectedNodePubkey.slice(0, 12) + "…");
+        return { type: "node", id };
+    }
+    // Channel SCID — set when channel_announcement selected or channel card clicked in Q3
+    if (selectedChannelScid) {
+        return { type: "channel", id: String(selectedChannelScid) };
+    }
+    // Message — any message selected in Q1 (incl. node_announcement, channel_update)
+    if (currentMsg) {
+        const msgType = currentMsg.type || "msg";
+        const shortType = msgType === "channel_announcement" ? "CA"
+            : msgType === "channel_update" ? "CU"
+            : msgType === "node_announcement" ? "NA"
+            : msgType.slice(0, 4).toUpperCase();
+        const id = currentMsg.scid
+            ? `${shortType} · ${currentMsg.scid}`
+            : `${shortType} · ${String(currentMsg.hash || "").slice(0, 10)}…`;
+        return { type: "message", id };
+    }
+    return { type: "general", id: "GENERAL" };
+}
+
+function updateContextBar() {
+    const wrapEl  = document.getElementById("ctx-driver-wrap");
+    const hintEl  = document.getElementById("ctx-driver-hint");
+    const idEl    = document.getElementById("ctx-driver-id");
+    const closeEl = document.getElementById("ctx-driver-close");
+    if (!idEl) return;
+    const { type, id } = getContextDriver();
+    const hints = { message: "Message: ", channel: "Channel: ", node: "Node: ", general: "" };
+    if (hintEl) hintEl.textContent = hints[type] ?? "";
+    idEl.className = `ctx-driver-id id-${type}`;
+    idEl.textContent = id;
+    if (closeEl) {
+        closeEl.classList.toggle("visible", type !== "general");
+        const fresh = closeEl.cloneNode(true);
+        closeEl.replaceWith(fresh);
+        fresh.addEventListener("click", () => clearHighlight());
+    }
+    // Twinkle animation: restart on every non-general context activation
+    if (wrapEl) {
+        wrapEl.classList.remove("ctx-active");
+        if (type !== "general") {
+            // Force reflow so removing + re-adding the class restarts the animation
+            void wrapEl.offsetWidth;
+            wrapEl.classList.add("ctx-active");
+        }
+    }
+}
+
 // ─── Animation ──────────────────────────────────────────────────
 let animFrame = null;
 let animStart = null;
@@ -196,9 +257,13 @@ window.addEventListener("load", async () => {
     if (initialMessage) {
         await selectMessage(initialMessage);
         // Don't let the auto-selected message filter the channels panel on load —
-        // the user hasn't made a deliberate selection yet
+        // the user hasn't made a deliberate selection yet; reset everything to general
         selectedChannelScid = null;
+        currentMsg = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
         renderChannelsPanel();
+        updateContextBar();
     }
 });
 
@@ -367,7 +432,15 @@ function renderMessageIntel(msg) {
     const intelWrap = document.getElementById("msg-intel-wrap");
     if (!intelWrap) return;
     if (!msg) {
-        intelWrap.innerHTML = '<div class="msg-intel-empty">Select a message to inspect its metadata footprint.</div>';
+        intelWrap.innerHTML = `
+            <div class="msg-intel-empty" id="msg-intel-idle" style="cursor:pointer" title="Click to reset to general context">
+                <div class="msg-idle-icon">📡</div>
+                <div class="msg-idle-title">NO MESSAGE SELECTED</div>
+                <div class="msg-idle-sub">Click any message in the list to inspect its identity, relay footprint, and timing metadata.</div>
+            </div>`;
+        document.getElementById("msg-intel-idle")?.addEventListener("click", () => {
+            clearHighlight();
+        });
         return;
     }
 
@@ -393,9 +466,12 @@ function renderMessageIntel(msg) {
                     <div class="msg-card-subtitle">${escHtml(formatMessageType(messageMeta.type || msg.type))}</div>
                     <div class="msg-card-hash">${escHtml(String(msg.hash))}</div>
                 </div>
-                <div class="msg-chip-row">
-                    <span class="msg-chip accent">${escHtml(profile)}</span>
-                    <span class="msg-chip ${hasSummary ? "good" : ""}">${escHtml(replayState)}</span>
+                <div style="display:flex;align-items:flex-start;gap:6px">
+                    <div class="msg-chip-row">
+                        <span class="msg-chip accent">${escHtml(profile)}</span>
+                        <span class="msg-chip ${hasSummary ? "good" : ""}">${escHtml(replayState)}</span>
+                    </div>
+                    <button class="msg-intel-close" id="msg-intel-close-btn" title="Close">✕</button>
                 </div>
             </div>
 
@@ -450,6 +526,17 @@ function renderMessageIntel(msg) {
             </div>
         </div>
     `;
+
+    // Close button — dismisses the intel pane back to idle
+    document.getElementById("msg-intel-close-btn")?.addEventListener("click", () => {
+        currentMsg = null;
+        selectedChannelScid = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
+        renderChannelsPanel();
+        renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+        updateContextBar();
+    });
 }
 
 async function ensureWavefrontLoaded(msgHash) {
@@ -550,12 +637,18 @@ function renderMessageList(filterType) {
     // If the filter type is changing, the previously selected message is no longer in context
     if (normalizedFilterType !== replayFilterType) {
         selectedChannelScid = null;
+        currentMsg = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
         renderChannelsPanel();
+        updateContextBar();
     }
     replayFilterType = normalizedFilterType;
     const universe = messageIntel.length ? messageIntel : messageCatalog;
     const filtered = (normalizedFilterType === "all" ? universe : universe.filter(m => m.type === normalizedFilterType))
         .filter(m => {
+            // In node context: only show messages originated by that node
+            if (selectedNodePubkey && m.orig_node !== selectedNodePubkey) return false;
             if (!replaySearchText) return true;
             return [m.hash, m.scid, m.orig_node, m.type]
                 .filter(Boolean)
@@ -692,9 +785,14 @@ function clearHighlight() {
     highlightedPeers.clear();
     selectedNodePubkey = null;
     selectedChannelScid = null;
+    currentMsg = null;
+    document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+    renderMessageIntel(null);
+    renderMessageList(replayFilterType);
     updateAllHighlights();
     // Reset node list to global top relayers when map is clicked
     renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+    updateContextBar();
 }
 
 function clearPeerHighlight({ preserveSelectedNode = false } = {}) {
@@ -864,14 +962,26 @@ function renderChannelsPanel() {
     root.querySelectorAll(".channel-card").forEach(card => {
         card.addEventListener("click", () => {
             const scid = card.dataset.scid;
+            // Clicking a channel always exits node context — channel is the new driver
+            selectedNodePubkey = null;
+            selectedChannelScid = scid;
+            // Mark this card as active, clear others
+            root.querySelectorAll(".channel-card").forEach(c => c.classList.remove("active"));
+            card.classList.add("active");
             const ctx = deriveNodeListFromChannel(scid);
-            if (selectedNodePubkey) {
-                nodeListContext = ctx;
-            } else {
-                renderNodeList(ctx);
-            }
+            renderNodeList(ctx);
+            // Re-render Q3 so it switches out of node mode into channel/global mode
+            renderChannelsPanel();
+            updateContextBar();
         });
     });
+
+    // Restore active state if a channel SCID is already selected (panel re-render)
+    if (selectedChannelScid) {
+        root.querySelectorAll(".channel-card").forEach(card => {
+            card.classList.toggle("active", card.dataset.scid === selectedChannelScid);
+        });
+    }
 
     updateHeaderStats(active, items);
 }
@@ -1031,8 +1141,10 @@ function updateMapForWavefront() {
 
 async function selectMessage(msg) {
     currentMsg = msg;
-    // Set channel filter only for channel_announcement; clear it for all other message types
-    selectedChannelScid = (msg?.type === "channel_announcement" && msg?.scid) ? String(msg.scid) : null;
+    // Set channel filter for any channel message type that carries a scid
+    selectedChannelScid = (
+        (msg?.type === "channel_announcement" || msg?.type === "channel_update") && msg?.scid
+    ) ? String(msg.scid) : null;
 
     // Highlight active in list
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
@@ -1046,6 +1158,7 @@ async function selectMessage(msg) {
 
     // Update channel panel — filters to the selected channel when it's a channel_announcement
     renderChannelsPanel();
+    updateContextBar();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2205,6 +2318,8 @@ function openNodeCard(pubkey) {
         } else {
             renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
         }
+        renderMessageList(replayFilterType);
+        updateContextBar();
     });
 
     // Co-location peer chips
@@ -2216,7 +2331,9 @@ function openNodeCard(pubkey) {
     });
 
     highlightPeer(pubkey);
+    renderMessageList(replayFilterType);
     renderChannelsPanel();
+    updateContextBar();
 }
 
 function closeNodeCard() {
@@ -2226,6 +2343,7 @@ function closeNodeCard() {
         : { pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" }
     );
     renderChannelsPanel();
+    updateContextBar();
 }
 
 function renderNodeDetailsPlaceholder() {

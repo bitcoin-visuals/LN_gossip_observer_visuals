@@ -27,11 +27,88 @@
             justify-content: space-between;
             height: 40px;
             flex-shrink: 0;
+            position: relative;
         }
         .header h1 { font-size: 14px; color: #ff6b35; letter-spacing: 2px; }
         .header h1 span { color: #555; font-weight: 300; font-size: 11px; }
         .header .stats { display: flex; gap: 16px; font-size: 10px; color: #666; }
         .header .stats .val { color: #ff6b35; font-weight: bold; }
+
+        /* ── Context Driver (center of status bar) ── */
+        @keyframes ctx-twinkle {
+            0%   { opacity: 1; }
+            10%  { opacity: 0.25; }
+            22%  { opacity: 1; }
+            34%  { opacity: 0.4; }
+            46%  { opacity: 1; }
+            58%  { opacity: 0.6; }
+            70%  { opacity: 1; }
+            100% { opacity: 1; }
+        }
+        .ctx-driver-wrap {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 0;
+            white-space: nowrap;
+        }
+        .ctx-driver-wrap.ctx-active {
+            animation: ctx-twinkle 0.9s ease-out forwards;
+        }
+        .ctx-driver-label,
+        .ctx-driver-hint,
+        .ctx-driver-id {
+            pointer-events: none;
+        }
+        .ctx-driver-label {
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #00e5ff55;
+            font-weight: normal;
+        }
+        .ctx-driver-id {
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: bold;
+            color: #00e5ff;
+            max-width: 380px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .ctx-driver-id.id-general { color: #00e5ff55; }
+        .ctx-driver-hint {
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: normal;
+            color: #00e5ff88;
+        }
+        .ctx-driver-hint:empty { display: none; }
+        .ctx-driver-close {
+            display: none;
+            margin-left: 10px;
+            background: none;
+            border: 1px solid #00e5ff30;
+            color: #00e5ff55;
+            font-size: 11px;
+            line-height: 1;
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+            font-family: inherit;
+            flex-shrink: 0;
+            transition: border-color 0.15s, color 0.15s;
+            padding: 0;
+        }
+        .ctx-driver-close.visible { display: flex; }
+        .ctx-driver-close:hover { border-color: #00e5ffaa; color: #00e5ff; }
 
         /* ── 2×2 Grid ── */
         .grid {
@@ -412,13 +489,40 @@
         .msg-intel-empty {
             height: 100%;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            color: #666;
-            font-size: 12px;
+            color: #333;
+            font-size: 11px;
             text-align: center;
             padding: 24px;
+            gap: 8px;
+            transition: background 0.2s;
         }
+        .msg-intel-empty:hover { background: rgba(255,255,255,0.02); }
+        .msg-intel-empty:hover .msg-idle-icon { opacity: 0.5; }
+        .msg-intel-empty:hover .msg-idle-title { color: #555; }
+        .msg-intel-empty .msg-idle-icon { font-size: 28px; opacity: 0.3; }
+        .msg-intel-empty .msg-idle-title { font-size: 12px; color: #444; letter-spacing: 1px; }
+        .msg-intel-empty .msg-idle-sub { font-size: 9px; color: #2a2a3a; line-height: 1.6; max-width: 200px; }
+        .msg-intel-close {
+            background: none;
+            border: 1px solid #222;
+            color: #555;
+            font-size: 11px;
+            cursor: pointer;
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-family: inherit;
+            transition: border-color 0.15s, color 0.15s;
+            padding: 0;
+        }
+        .msg-intel-close:hover { border-color: #e63946; color: #e63946; }
         .msg-card {
             border: 1px solid #1d1d31;
             border-radius: 12px;
@@ -624,10 +728,16 @@
             padding: 10px;
             background: rgba(255,255,255,0.015);
             transition: border-color .16s ease, transform .16s ease, background .16s ease;
+            cursor: pointer;
         }
+        .channel-card:hover { border-color: #457b9d60; background: rgba(69,123,157,0.06); }
         .channel-card.highlighted {
             border-color: #ff6b35;
             background: rgba(255,107,53,0.08);
+        }
+        .channel-card.active {
+            border-color: #457b9d;
+            background: rgba(69,123,157,0.12);
         }
         .channel-card-header {
             display: flex;
@@ -1180,6 +1290,12 @@
 
 <div class="header">
     <h1>LN GOSSIP VISUALIZER <span>// LN Gossip Propagation Analyzer</span></h1>
+    <div class="ctx-driver-wrap" id="ctx-driver-wrap">
+        <span class="ctx-driver-label">CONTEXT:&nbsp;</span>
+        <span class="ctx-driver-hint" id="ctx-driver-hint"></span>
+        <span class="ctx-driver-id id-general" id="ctx-driver-id">GENERAL</span>
+        <button class="ctx-driver-close" id="ctx-driver-close" title="Clear context">✕</button>
+    </div>
     <div class="stats">
         <span>↳ Elements In Scope</span>
         <span><span class="val" id="stat-peers">—</span> peers</span>
