@@ -686,10 +686,16 @@
             padding: 10px;
             background: rgba(255,255,255,0.015);
             transition: border-color .16s ease, transform .16s ease, background .16s ease;
+            cursor: pointer;
         }
+        .channel-card:hover { border-color: #457b9d60; background: rgba(69,123,157,0.06); }
         .channel-card.highlighted {
             border-color: #ff6b35;
             background: rgba(255,107,53,0.08);
+        }
+        .channel-card.active {
+            border-color: #457b9d;
+            background: rgba(69,123,157,0.12);
         }
         .channel-card-header {
             display: flex;

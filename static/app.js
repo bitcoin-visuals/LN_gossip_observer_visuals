@@ -939,6 +939,11 @@ function renderChannelsPanel() {
     root.querySelectorAll(".channel-card").forEach(card => {
         card.addEventListener("click", () => {
             const scid = card.dataset.scid;
+            // Set selectedChannelScid so getContextDriver() returns "channel" type
+            selectedChannelScid = scid;
+            // Mark this card as active, clear others
+            root.querySelectorAll(".channel-card").forEach(c => c.classList.remove("active"));
+            card.classList.add("active");
             const ctx = deriveNodeListFromChannel(scid);
             if (selectedNodePubkey) {
                 nodeListContext = ctx;
@@ -948,6 +953,13 @@ function renderChannelsPanel() {
             updateContextBar();
         });
     });
+
+    // Restore active state if a channel SCID is already selected (panel re-render)
+    if (selectedChannelScid) {
+        root.querySelectorAll(".channel-card").forEach(card => {
+            card.classList.toggle("active", card.dataset.scid === selectedChannelScid);
+        });
+    }
 
     updateHeaderStats(active, items);
 }
