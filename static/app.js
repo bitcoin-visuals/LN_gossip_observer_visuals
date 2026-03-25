@@ -188,9 +188,12 @@ function getContextDriver() {
 }
 
 function updateContextBar() {
-    const idEl = document.getElementById("ctx-driver-id");
+    const hintEl = document.getElementById("ctx-driver-hint");
+    const idEl   = document.getElementById("ctx-driver-id");
     if (!idEl) return;
     const { type, id } = getContextDriver();
+    const hints = { message: "Message: ", channel: "Channel: ", node: "Node: ", general: "" };
+    if (hintEl) hintEl.textContent = hints[type] ?? "";
     idEl.className = `ctx-driver-id id-${type}`;
     idEl.textContent = id;
 }

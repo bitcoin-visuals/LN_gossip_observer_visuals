@@ -63,6 +63,14 @@
             text-overflow: ellipsis;
         }
         .ctx-driver-id.id-general { color: #00e5ff55; }
+        .ctx-driver-hint {
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: normal;
+            color: #00e5ff88;
+        }
+        .ctx-driver-hint:empty { display: none; }
 
         /* ── 2×2 Grid ── */
         .grid {
@@ -1213,6 +1221,7 @@
     <h1>LN GOSSIP VISUALIZER <span>// LN Gossip Propagation Analyzer</span></h1>
     <div class="ctx-driver-wrap" id="ctx-driver-wrap">
         <span class="ctx-driver-label">CONTEXT:&nbsp;</span>
+        <span class="ctx-driver-hint" id="ctx-driver-hint"></span>
         <span class="ctx-driver-id id-general" id="ctx-driver-id">GENERAL</span>
     </div>
     <div class="stats">
