@@ -41,42 +41,28 @@
             transform: translateX(-50%);
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 0;
             pointer-events: none;
+            white-space: nowrap;
         }
         .ctx-driver-label {
-            font-size: 9px;
-            letter-spacing: 1.5px;
+            font-size: 14px;
+            letter-spacing: 2px;
             text-transform: uppercase;
-            color: #444;
-            white-space: nowrap;
+            color: #00e5ff55;
+            font-weight: normal;
         }
-        .ctx-driver-type {
-            font-size: 9px;
-            letter-spacing: 1.2px;
-            text-transform: uppercase;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-weight: bold;
-            white-space: nowrap;
-        }
-        .ctx-driver-type.type-general { color: #555; border: 1px solid #222; background: transparent; }
-        .ctx-driver-type.type-message { color: #ff6b35; border: 1px solid #ff6b3540; background: #ff6b350d; }
-        .ctx-driver-type.type-channel { color: #457b9d; border: 1px solid #457b9d40; background: #457b9d0d; }
-        .ctx-driver-type.type-node    { color: #2a9d8f; border: 1px solid #2a9d8f40; background: #2a9d8f0d; }
         .ctx-driver-id {
-            font-size: 11px;
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
             font-weight: bold;
-            letter-spacing: 0.5px;
-            white-space: nowrap;
-            max-width: 320px;
+            color: #00e5ff;
+            max-width: 380px;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .ctx-driver-id.id-general { color: #333; }
-        .ctx-driver-id.id-message  { color: #ff6b35cc; }
-        .ctx-driver-id.id-channel  { color: #457b9d; }
-        .ctx-driver-id.id-node     { color: #2a9d8f; }
+        .ctx-driver-id.id-general { color: #00e5ff55; }
 
         /* ── 2×2 Grid ── */
         .grid {
@@ -1226,8 +1212,7 @@
 <div class="header">
     <h1>LN GOSSIP VISUALIZER <span>// LN Gossip Propagation Analyzer</span></h1>
     <div class="ctx-driver-wrap" id="ctx-driver-wrap">
-        <span class="ctx-driver-label">current context</span>
-        <span class="ctx-driver-type type-general" id="ctx-driver-type">general</span>
+        <span class="ctx-driver-label">CONTEXT:&nbsp;</span>
         <span class="ctx-driver-id id-general" id="ctx-driver-id">GENERAL</span>
     </div>
     <div class="stats">

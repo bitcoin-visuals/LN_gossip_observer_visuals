@@ -188,12 +188,9 @@ function getContextDriver() {
 }
 
 function updateContextBar() {
-    const typeEl = document.getElementById("ctx-driver-type");
-    const idEl   = document.getElementById("ctx-driver-id");
-    if (!typeEl || !idEl) return;
+    const idEl = document.getElementById("ctx-driver-id");
+    if (!idEl) return;
     const { type, id } = getContextDriver();
-    typeEl.className = `ctx-driver-type type-${type}`;
-    typeEl.textContent = type;
     idEl.className = `ctx-driver-id id-${type}`;
     idEl.textContent = id;
 }
