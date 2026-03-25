@@ -939,17 +939,16 @@ function renderChannelsPanel() {
     root.querySelectorAll(".channel-card").forEach(card => {
         card.addEventListener("click", () => {
             const scid = card.dataset.scid;
-            // Set selectedChannelScid so getContextDriver() returns "channel" type
+            // Clicking a channel always exits node context — channel is the new driver
+            selectedNodePubkey = null;
             selectedChannelScid = scid;
             // Mark this card as active, clear others
             root.querySelectorAll(".channel-card").forEach(c => c.classList.remove("active"));
             card.classList.add("active");
             const ctx = deriveNodeListFromChannel(scid);
-            if (selectedNodePubkey) {
-                nodeListContext = ctx;
-            } else {
-                renderNodeList(ctx);
-            }
+            renderNodeList(ctx);
+            // Re-render Q3 so it switches out of node mode into channel/global mode
+            renderChannelsPanel();
             updateContextBar();
         });
     });
