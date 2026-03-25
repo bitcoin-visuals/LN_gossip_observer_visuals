@@ -42,8 +42,12 @@
             display: flex;
             align-items: center;
             gap: 0;
-            pointer-events: none;
             white-space: nowrap;
+        }
+        .ctx-driver-label,
+        .ctx-driver-hint,
+        .ctx-driver-id {
+            pointer-events: none;
         }
         .ctx-driver-label {
             font-size: 14px;
@@ -71,6 +75,27 @@
             color: #00e5ff88;
         }
         .ctx-driver-hint:empty { display: none; }
+        .ctx-driver-close {
+            display: none;
+            margin-left: 10px;
+            background: none;
+            border: 1px solid #00e5ff30;
+            color: #00e5ff55;
+            font-size: 11px;
+            line-height: 1;
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+            font-family: inherit;
+            flex-shrink: 0;
+            transition: border-color 0.15s, color 0.15s;
+            padding: 0;
+        }
+        .ctx-driver-close.visible { display: flex; }
+        .ctx-driver-close:hover { border-color: #00e5ffaa; color: #00e5ff; }
 
         /* ── 2×2 Grid ── */
         .grid {
@@ -459,7 +484,11 @@
             text-align: center;
             padding: 24px;
             gap: 8px;
+            transition: background 0.2s;
         }
+        .msg-intel-empty:hover { background: rgba(255,255,255,0.02); }
+        .msg-intel-empty:hover .msg-idle-icon { opacity: 0.5; }
+        .msg-intel-empty:hover .msg-idle-title { color: #555; }
         .msg-intel-empty .msg-idle-icon { font-size: 28px; opacity: 0.3; }
         .msg-intel-empty .msg-idle-title { font-size: 12px; color: #444; letter-spacing: 1px; }
         .msg-intel-empty .msg-idle-sub { font-size: 9px; color: #2a2a3a; line-height: 1.6; max-width: 200px; }
@@ -1252,6 +1281,7 @@
         <span class="ctx-driver-label">CONTEXT:&nbsp;</span>
         <span class="ctx-driver-hint" id="ctx-driver-hint"></span>
         <span class="ctx-driver-id id-general" id="ctx-driver-id">GENERAL</span>
+        <button class="ctx-driver-close" id="ctx-driver-close" title="Clear context">✕</button>
     </div>
     <div class="stats">
         <span>↳ Elements In Scope</span>

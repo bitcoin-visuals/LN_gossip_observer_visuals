@@ -188,14 +188,22 @@ function getContextDriver() {
 }
 
 function updateContextBar() {
-    const hintEl = document.getElementById("ctx-driver-hint");
-    const idEl   = document.getElementById("ctx-driver-id");
+    const hintEl  = document.getElementById("ctx-driver-hint");
+    const idEl    = document.getElementById("ctx-driver-id");
+    const closeEl = document.getElementById("ctx-driver-close");
     if (!idEl) return;
     const { type, id } = getContextDriver();
     const hints = { message: "Message: ", channel: "Channel: ", node: "Node: ", general: "" };
     if (hintEl) hintEl.textContent = hints[type] ?? "";
     idEl.className = `ctx-driver-id id-${type}`;
     idEl.textContent = id;
+    if (closeEl) {
+        closeEl.classList.toggle("visible", type !== "general");
+        // Wire once — remove old listener by replacing the element clone trick
+        const fresh = closeEl.cloneNode(true);
+        closeEl.replaceWith(fresh);
+        fresh.addEventListener("click", () => clearHighlight());
+    }
 }
 
 // ─── Animation ──────────────────────────────────────────────────
@@ -416,11 +424,14 @@ function renderMessageIntel(msg) {
     if (!intelWrap) return;
     if (!msg) {
         intelWrap.innerHTML = `
-            <div class="msg-intel-empty">
+            <div class="msg-intel-empty" id="msg-intel-idle" style="cursor:pointer" title="Click to reset to general context">
                 <div class="msg-idle-icon">📡</div>
                 <div class="msg-idle-title">NO MESSAGE SELECTED</div>
                 <div class="msg-idle-sub">Click any message in the list to inspect its identity, relay footprint, and timing metadata.</div>
             </div>`;
+        document.getElementById("msg-intel-idle")?.addEventListener("click", () => {
+            clearHighlight();
+        });
         return;
     }
 
