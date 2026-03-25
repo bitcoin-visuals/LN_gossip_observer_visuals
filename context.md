@@ -97,7 +97,7 @@ The following table describes every distinct observable state, how to enter it, 
 | **global** | Map click · canvas miss · `Esc` · `clearHighlight()` | `null` | `null` | `"global"` | Full message list, active filter tab | Zoom-out to default if was zoomed | Top 30 channels globally | Top 30 fastest relayers network-wide |
 | **node_announcement** | Click `node_announcement` in Q1 | `null` | `null` | `"message"` | Same list, selected item highlighted | `flyTo` origin node at zoom 5 | Top 30 channels globally | Single origin node, highlighted on map |
 | **channel_announcement** | Click `channel_announcement` in Q1 | `null` | SCID string | `"channel"` | Same list, selected item highlighted | No zoom change (no highlights) | Filtered to that SCID only | Top 30 nodes by relay count for that SCID |
-| **channel_update** | Click `channel_update` in Q1 | `null` | `null` | `"channel"` | Same list, selected item highlighted | No zoom change | Top 30 channels globally | Top 30 nodes by relay count for that msg's SCID |
+| **channel_update** | Click `channel_update` in Q1 | `null` | SCID string | `"channel"` | Same list, selected item highlighted | No zoom change | Filtered to that SCID only | Top 30 nodes by relay count for that SCID |
 | **node_selected** | `openNodeCard(pk)` from any source | pubkey | unchanged | unchanged | Unchanged | `flyTo` node at zoom 5 | Node-scoped channels (only channels that node participates in) | Layer 2 node detail card |
 | **coloc_group** | Click co-location card in Q1 threat panel | `null` | `null` | `"global"` | Unchanged | `flyToBounds` if bounds tighter than default zoom | Top 30 channels globally | Top 30 fastest relayers (list not re-rendered; just highlights update on existing list) |
 | **channel_selected** | Click a channel card in Q3 | `null` | unchanged | `"channel"` | Unchanged | No zoom change | Unchanged (channel card active state) | Top 30 nodes by relay count for that SCID |
@@ -122,7 +122,7 @@ Each user action and its exact mutations:
 ```
 selectMessage(msg)
   currentMsg = msg
-  selectedChannelScid = (type === "channel_announcement" && scid) ? scid : null
+  selectedChannelScid = (type === "channel_announcement" || type === "channel_update") && scid ? scid : null
   → renderMessageList(replayFilterType)        [re-renders Q1 active state only]
   → renderMessageIntel(msg)                    [Q1 detail pane]
   → setMessageDetailMode(messageDetailMode)

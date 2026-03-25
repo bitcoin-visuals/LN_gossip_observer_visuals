@@ -188,6 +188,7 @@ function getContextDriver() {
 }
 
 function updateContextBar() {
+    const wrapEl  = document.getElementById("ctx-driver-wrap");
     const hintEl  = document.getElementById("ctx-driver-hint");
     const idEl    = document.getElementById("ctx-driver-id");
     const closeEl = document.getElementById("ctx-driver-close");
@@ -199,10 +200,18 @@ function updateContextBar() {
     idEl.textContent = id;
     if (closeEl) {
         closeEl.classList.toggle("visible", type !== "general");
-        // Wire once — remove old listener by replacing the element clone trick
         const fresh = closeEl.cloneNode(true);
         closeEl.replaceWith(fresh);
         fresh.addEventListener("click", () => clearHighlight());
+    }
+    // Twinkle animation: restart on every non-general context activation
+    if (wrapEl) {
+        wrapEl.classList.remove("ctx-active");
+        if (type !== "general") {
+            // Force reflow so removing + re-adding the class restarts the animation
+            void wrapEl.offsetWidth;
+            wrapEl.classList.add("ctx-active");
+        }
     }
 }
 
@@ -1129,8 +1138,10 @@ function updateMapForWavefront() {
 
 async function selectMessage(msg) {
     currentMsg = msg;
-    // Set channel filter only for channel_announcement; clear it for all other message types
-    selectedChannelScid = (msg?.type === "channel_announcement" && msg?.scid) ? String(msg.scid) : null;
+    // Set channel filter for any channel message type that carries a scid
+    selectedChannelScid = (
+        (msg?.type === "channel_announcement" || msg?.type === "channel_update") && msg?.scid
+    ) ? String(msg.scid) : null;
 
     // Highlight active in list
     document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
