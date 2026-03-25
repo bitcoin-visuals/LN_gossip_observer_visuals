@@ -413,7 +413,12 @@ function renderMessageIntel(msg) {
     const intelWrap = document.getElementById("msg-intel-wrap");
     if (!intelWrap) return;
     if (!msg) {
-        intelWrap.innerHTML = '<div class="msg-intel-empty">Select a message to inspect its metadata footprint.</div>';
+        intelWrap.innerHTML = `
+            <div class="msg-intel-empty">
+                <div class="msg-idle-icon">📡</div>
+                <div class="msg-idle-title">NO MESSAGE SELECTED</div>
+                <div class="msg-idle-sub">Click any message in the list to inspect its identity, relay footprint, and timing metadata.</div>
+            </div>`;
         return;
     }
 
@@ -439,9 +444,12 @@ function renderMessageIntel(msg) {
                     <div class="msg-card-subtitle">${escHtml(formatMessageType(messageMeta.type || msg.type))}</div>
                     <div class="msg-card-hash">${escHtml(String(msg.hash))}</div>
                 </div>
-                <div class="msg-chip-row">
-                    <span class="msg-chip accent">${escHtml(profile)}</span>
-                    <span class="msg-chip ${hasSummary ? "good" : ""}">${escHtml(replayState)}</span>
+                <div style="display:flex;align-items:flex-start;gap:6px">
+                    <div class="msg-chip-row">
+                        <span class="msg-chip accent">${escHtml(profile)}</span>
+                        <span class="msg-chip ${hasSummary ? "good" : ""}">${escHtml(replayState)}</span>
+                    </div>
+                    <button class="msg-intel-close" id="msg-intel-close-btn" title="Close">✕</button>
                 </div>
             </div>
 
@@ -496,6 +504,17 @@ function renderMessageIntel(msg) {
             </div>
         </div>
     `;
+
+    // Close button — dismisses the intel pane back to idle
+    document.getElementById("msg-intel-close-btn")?.addEventListener("click", () => {
+        currentMsg = null;
+        selectedChannelScid = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
+        renderChannelsPanel();
+        renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+        updateContextBar();
+    });
 }
 
 async function ensureWavefrontLoaded(msgHash) {
@@ -597,6 +616,8 @@ function renderMessageList(filterType) {
     if (normalizedFilterType !== replayFilterType) {
         selectedChannelScid = null;
         currentMsg = null;
+        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+        renderMessageIntel(null);
         renderChannelsPanel();
         updateContextBar();
     }
@@ -741,6 +762,8 @@ function clearHighlight() {
     selectedNodePubkey = null;
     selectedChannelScid = null;
     currentMsg = null;
+    document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+    renderMessageIntel(null);
     updateAllHighlights();
     // Reset node list to global top relayers when map is clicked
     renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
