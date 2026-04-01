@@ -54,3 +54,4 @@ static/data/summary.json
 static/data/leaks.json
 static/data/fingerprints.json
 .vercel
+.env*.local

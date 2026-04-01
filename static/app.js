@@ -2388,15 +2388,17 @@ function openNodeCard(pubkey) {
 
     if (badge) badge.textContent = peer.alias || pubkey.slice(0, 10) + "…";
 
-    // Back button
+    // Back button — full reset to general context across all quadrants
     document.getElementById("nd-back-btn").addEventListener("click", () => {
         selectedNodePubkey = null;
-        if (nodeListContext.pubkeys.length) {
-            renderNodeList(nodeListContext);
-        } else {
-            renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
-        }
+        selectedChannelScid = null;
+        peerChannelStrength = new Map();
+        highlightedPeers.clear();
+        nodeListContext = { pubkeys: [], label: "All nodes", source: "global" };
+        renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
         renderMessageList(replayFilterType);
+        renderChannelsPanel();
+        updateAllHighlights();
         updateContextBar();
     });
 

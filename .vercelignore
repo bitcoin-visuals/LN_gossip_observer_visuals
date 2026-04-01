@@ -5,8 +5,8 @@ static/data/OLD_wavefronts/
 # Force-include files that are gitignored but needed at runtime
 !static/data/message_intel.json
 
-# Raw source data — not served to the browser
-data/
+# Raw source data — not served to the browser (root-level only, not static/data/)
+/data/
 
 # Python tooling
 .venv/
