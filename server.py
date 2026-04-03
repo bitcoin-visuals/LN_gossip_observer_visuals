@@ -15,7 +15,12 @@ CORS(app)
 
 
 @app.route("/")
-def index():
+def landing():
+    return send_from_directory(STATIC_DIR, "landing.html")
+
+
+@app.route("/dashboard")
+def dashboard():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
