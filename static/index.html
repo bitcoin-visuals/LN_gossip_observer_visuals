@@ -1284,12 +1284,35 @@
 
         /* Leaflet tooltip override */
         .leaflet-tooltip { font-family: inherit; font-size: 10px; }
+
+        /* ── Search button in top bar ── */
+        .header-search-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 11px;
+            font-size: 11px;
+            color: #a0aabf;
+            background: #0f1018;
+            border: 1px solid #1d1d31;
+            border-radius: 6px;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        .header-search-btn:hover {
+            border-color: #457b9d;
+            color: #f4f6fb;
+        }
     </style>
 </head>
 <body>
 
 <div class="header">
-    <h1>LN GOSSIP VISUALIZER <span>// LN Gossip Propagation Analyzer</span></h1>
+    <div style="display:flex;align-items:center;gap:8px;">
+        <h1>LN GOSSIP VISUALIZER</h1>
+        <a id="search-btn" href="/" class="header-search-btn" title="Search nodes, channels &amp; messages">🔍 Search</a>
+    </div>
     <div class="ctx-driver-wrap" id="ctx-driver-wrap">
         <span class="ctx-driver-label">CONTEXT:&nbsp;</span>
         <span class="ctx-driver-hint" id="ctx-driver-hint"></span>
