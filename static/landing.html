@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LN Gossip Visualizer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: #0d0d18;
+            color: #f4f6fb;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* ── Hero section ── */
+        .hero {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 14vh;
+            padding: 0 20px;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 28px;
+            letter-spacing: 3px;
+            color: #ff6b35;
+        }
+        .hero .tagline {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #777;
+            font-weight: 300;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Search ── */
+        .search-wrap {
+            position: relative;
+            margin-top: 36px;
+            width: 100%;
+            max-width: 540px;
+        }
+        .search-input {
+            width: 100%;
+            padding: 12px 18px;
+            font-family: inherit;
+            font-size: 13px;
+            color: #f4f6fb;
+            background: #12121f;
+            border: 1px solid #1d1d31;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .search-input::placeholder { color: #555; }
+        .search-input:focus { border-color: #457b9d; }
+
+        /* ── Search results dropdown ── */
+        .search-results {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            max-height: 320px;
+            overflow-y: auto;
+            background: #12121f;
+            border: 1px solid #1d1d31;
+            border-radius: 8px;
+            display: none;
+            z-index: 10;
+        }
+        .search-results.visible { display: block; }
+        .sr-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 16px;
+            cursor: pointer;
+            text-decoration: none;
+            color: #ccc;
+            font-size: 12px;
+            border-bottom: 1px solid #1a1a2a;
+            transition: background 0.12s;
+        }
+        .sr-item:last-child { border-bottom: none; }
+        .sr-item:hover { background: #1a1a2e; color: #f4f6fb; }
+        .sr-badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #fff;
+            flex-shrink: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .sr-badge.node    { background: #457b9d; }
+        .sr-badge.channel { background: #8338ec; }
+        .sr-badge.message { background: #ff6b35; }
+        .sr-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sr-empty {
+            padding: 14px 16px;
+            font-size: 11px;
+            color: #555;
+            text-align: center;
+        }
+
+        /* ── Explore CTA ── */
+        .explore-btn {
+            display: inline-block;
+            margin-top: 28px;
+            padding: 10px 32px;
+            font-family: inherit;
+            font-size: 13px;
+            letter-spacing: 1px;
+            color: #f4f6fb;
+            background: linear-gradient(135deg, #ff6b35 0%, #c74b1a 100%);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: opacity 0.2s;
+        }
+        .explore-btn:hover { opacity: 0.85; }
+
+        /* ── Stats strip ── */
+        .stats-strip {
+            margin-top: 48px;
+            display: flex;
+            gap: 28px;
+            flex-wrap: wrap;
+            justify-content: center;
+            font-size: 11px;
+            color: #555;
+        }
+        .stats-strip .val {
+            color: #ff6b35;
+            font-weight: bold;
+        }
+
+        /* ── Footer ── */
+        .footer {
+            margin-top: auto;
+            padding: 24px 0;
+            font-size: 10px;
+            color: #333;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 2px; }
+
+        /* ── Mobile ── */
+        @media (max-width: 600px) {
+            .hero { margin-top: 8vh; }
+            .hero h1 { font-size: 20px; }
+            .stats-strip { flex-direction: column; align-items: center; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="hero">
+    <h1>LN GOSSIP VISUALIZER</h1>
+    <p class="tagline">Explore Lightning gossip propagation from captured network data</p>
+
+    <div class="search-wrap">
+        <input
+            type="text"
+            class="search-input"
+            id="search-input"
+            placeholder="Search nodes or channels by ID (alias, pubkey, channel ID…)"
+            autocomplete="off"
+            spellcheck="false"
+        >
+        <div class="search-results" id="search-results"></div>
+    </div>
+
+    <a href="/dashboard" class="explore-btn">▶ Explore Dashboard</a>
+</div>
+
+<div class="stats-strip" id="stats-strip">
+    <span><span class="val" id="stat-peers">—</span> peers observed</span>
+    <span><span class="val" id="stat-msgs">—</span> messages tracked</span>
+    <span><span class="val" id="stat-ips">—</span> IPs mapped</span>
+    <span><span class="val" id="stat-channels">—</span> channels indexed</span>
+</div>
+
+<div class="footer">BTC++ Hackathon 2026</div>
+
+<script>
+// ─── Data loading ───────────────────────────────────────────
+const DATA_BASE = "data";
+
+let peers = {};
+let channels = [];
+let messages = {};
+let summary = {};
+
+async function fetchJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return r.json();
+}
+
+async function loadData() {
+    const [p, ch, m, s] = await Promise.all([
+        fetchJSON(`${DATA_BASE}/peers.json`),
+        fetchJSON(`${DATA_BASE}/channels.json`),
+        fetchJSON(`${DATA_BASE}/messages.json`),
+        fetchJSON(`${DATA_BASE}/summary.json`),
+    ]);
+    if (p) peers = p;
+    if (ch) channels = ch;
+    if (m) messages = m;
+    if (s) summary = s;
+    renderStats();
+    buildSearchIndex();
+}
+
+// ─── Stats strip ────────────────────────────────────────────
+function renderStats() {
+    const fmt = n => n == null ? "—" : Number(n).toLocaleString();
+    document.getElementById("stat-peers").textContent  = fmt(summary.total_peers);
+    document.getElementById("stat-msgs").textContent   = fmt(summary.total_messages);
+    document.getElementById("stat-ips").textContent     = fmt(summary.peers_with_ip);
+    document.getElementById("stat-channels").textContent = fmt(summary.total_channels_indexed);
+}
+
+// ─── Search index ───────────────────────────────────────────
+// Flat list of { type, label, sublabel, href }
+let searchIndex = [];
+
+function buildSearchIndex() {
+    searchIndex = [];
+
+    // Nodes
+    for (const [pubkey, info] of Object.entries(peers)) {
+        searchIndex.push({
+            type: "node",
+            label: info.alias || pubkey.slice(0, 16) + "…",
+            sublabel: pubkey.slice(0, 20) + "…",
+            searchText: [info.alias, pubkey, info.ip, info.city, info.country]
+                .filter(Boolean).join(" ").toLowerCase(),
+            href: `/dashboard?node=${encodeURIComponent(pubkey)}`,
+        });
+    }
+
+    // Channels
+    for (const ch of channels) {
+        const aliases = (ch.origin_aliases || []).join(", ");
+        // Format SCID into readable blocks: 988:711:642
+        const formattedScid = ch.scid.toString().match(/.{1,3}/g)?.slice(0, 3).join(":") || ch.scid;
+        searchIndex.push({
+            type: "channel",
+            label: formattedScid,
+            sublabel: aliases || `${ch.message_count} msgs`,
+            searchText: [ch.scid, formattedScid, aliases, "channel", ...(ch.origin_nodes || [])]
+                .filter(Boolean).join(" ").toLowerCase(),
+            href: `/dashboard?channel=${encodeURIComponent(ch.scid)}`,
+        });
+    }
+
+    // Messages (sample — use message_catalog if available, else messages dict)
+    for (const [hash, m] of Object.entries(messages)) {
+        searchIndex.push({
+            type: "message",
+            label: `${m.type} · ${hash.slice(0, 16)}…`,
+            sublabel: m.scid ? `SCID ${m.scid}` : (m.orig_node ? m.orig_node.slice(0, 20) + "…" : ""),
+            searchText: [hash, m.type, m.scid, m.orig_node]
+                .filter(Boolean).join(" ").toLowerCase(),
+            href: `/dashboard?msg=${encodeURIComponent(hash)}`,
+        });
+    }
+}
+
+// ─── Search interaction ─────────────────────────────────────
+const searchInput   = document.getElementById("search-input");
+const searchResults = document.getElementById("search-results");
+
+let debounceTimer = null;
+
+searchInput.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(runSearch, 150);
+});
+
+searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        searchResults.classList.remove("visible");
+    }
+});
+
+document.addEventListener("click", (e) => {
+    if (!e.target.closest(".search-wrap")) {
+        searchResults.classList.remove("visible");
+    }
+});
+
+function runSearch() {
+    const q = searchInput.value.trim().toLowerCase();
+    if (!q) {
+        searchResults.classList.remove("visible");
+        return;
+    }
+
+    const hits = [];
+    const MAX = 40;
+    for (const item of searchIndex) {
+        if (item.searchText.includes(q) || item.searchText.indexOf(q) !== -1) {
+            hits.push(item);
+            if (hits.length >= MAX) break;
+        }
+    }
+
+    if (hits.length === 0) {
+        searchResults.innerHTML = '<div class="sr-empty">No results</div>';
+    } else {
+        searchResults.innerHTML = hits.map(h => `
+            <a class="sr-item" href="${h.href}">
+                <span class="sr-badge ${h.type}">${h.type}</span>
+                <span class="sr-label">${escapeHtml(h.label)}</span>
+                <span style="color:#555;font-size:10px;margin-left:auto;">${escapeHtml(h.sublabel)}</span>
+            </a>
+        `).join("");
+    }
+    searchResults.classList.add("visible");
+}
+
+function escapeHtml(s) {
+    if (!s) return "";
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ─── Boot ───────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
