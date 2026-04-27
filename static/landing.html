@@ -168,14 +168,14 @@
 
 <div class="hero">
     <h1>LN GOSSIP VISUALIZER</h1>
-    <p class="tagline">Observe how Lightning Network gossip messages propagate in real time</p>
+    <p class="tagline">Explore Lightning gossip propagation from captured network data</p>
 
     <div class="search-wrap">
         <input
             type="text"
             class="search-input"
             id="search-input"
-            placeholder="Search nodes, channels & messages (alias, pubkey, SCID, hash…)"
+            placeholder="Search nodes, channels & messages (alias, pubkey, channel ID…)"
             autocomplete="off"
             spellcheck="false"
         >
@@ -255,11 +255,13 @@ function buildSearchIndex() {
     // Channels
     for (const ch of channels) {
         const aliases = (ch.origin_aliases || []).join(", ");
+        // Format SCID into readable blocks: 988:711:642
+        const formattedScid = ch.scid.toString().match(/.{1,3}/g)?.slice(0, 3).join(":") || ch.scid;
         searchIndex.push({
             type: "channel",
-            label: ch.scid,
+            label: formattedScid,
             sublabel: aliases || `${ch.message_count} msgs`,
-            searchText: [ch.scid, aliases, ...(ch.origin_nodes || [])]
+            searchText: [ch.scid, formattedScid, aliases, "channel", ...(ch.origin_nodes || [])]
                 .filter(Boolean).join(" ").toLowerCase(),
             href: `/dashboard?channel=${encodeURIComponent(ch.scid)}`,
         });
