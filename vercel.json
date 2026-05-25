@@ -1,5 +1,9 @@
 {
   "outputDirectory": "static",
   "buildCommand": null,
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/", "destination": "/landing.html" }
+  ]
 }

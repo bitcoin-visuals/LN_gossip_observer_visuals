@@ -255,23 +255,52 @@ window.addEventListener("load", async () => {
     // Prime Q4 with global top relayers, then let selectMessage override with message context
     renderNodeList(nodeListContext);
 
-    // Auto-select first scoped message from the all-message intelligence browser
-    const initialMessage = messageIntel[0] || messageCatalog[0];
-    if (initialMessage) {
-        await selectMessage(initialMessage);
-        // Don't let the auto-selected message filter the channels panel on load —
-        // the user hasn't made a deliberate selection yet; reset everything to general
-        selectedChannelScid = null;
-        selectedNodePubkey = null;
-        currentMsg = null;
-        peerChannelStrength = new Map();
-        document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
-        renderMessageIntel(null);
-        renderMessageList(replayFilterType);
+    // ── URL parameter context forwarding (from landing page search) ──
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlNode    = urlParams.get("node");
+    const urlChannel = urlParams.get("channel");
+    const urlMsg     = urlParams.get("msg");
+    let contextApplied = false;
+
+    if (urlNode && peers[urlNode]) {
+        openNodeCard(urlNode);
+        highlightPeer(urlNode);
         renderChannelsPanel();
-        renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
-        updateAllHighlights();
         updateContextBar();
+        contextApplied = true;
+    } else if (urlChannel) {
+        selectedChannelScid = urlChannel;
+        renderChannelsPanel();
+        renderMessageList(replayFilterType);
+        updateContextBar();
+        contextApplied = true;
+    } else if (urlMsg) {
+        const msgObj = messages.find(m => String(m.hash) === urlMsg);
+        if (msgObj) {
+            await selectMessage(msgObj);
+            contextApplied = true;
+        }
+    }
+
+    if (!contextApplied) {
+        // Auto-select first scoped message from the all-message intelligence browser
+        const initialMessage = messageIntel[0] || messageCatalog[0];
+        if (initialMessage) {
+            await selectMessage(initialMessage);
+            // Don't let the auto-selected message filter the channels panel on load —
+            // the user hasn't made a deliberate selection yet; reset everything to general
+            selectedChannelScid = null;
+            selectedNodePubkey = null;
+            currentMsg = null;
+            peerChannelStrength = new Map();
+            document.querySelectorAll(".msg-item").forEach(el => el.classList.remove("active"));
+            renderMessageIntel(null);
+            renderMessageList(replayFilterType);
+            renderChannelsPanel();
+            renderNodeList({ pubkeys: getTopPeersByScore(30), label: "Top relayers", source: "global" });
+            updateAllHighlights();
+            updateContextBar();
+        }
     }
 });
 
