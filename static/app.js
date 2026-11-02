@@ -1055,14 +1055,16 @@ function initMap() {
         center: DEFAULT_MAP_VIEW.center,
         zoom: DEFAULT_MAP_VIEW.zoom,
         zoomControl: false,
-        attributionControl: false,
         minZoom: 2,
         maxBounds: [[-90, -180], [90, 180]],
         maxBoundsViscosity: 1.0,
     });
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        maxZoom: 18,
+    leafletMap.attributionControl.setPrefix(false);
+    // CARTO basemaps now require an API key; Esri's dark canvas is keyless (attribution required)
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 16,
         noWrap: true,
+        attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors",
     }).addTo(leafletMap);
     L.control.zoom({ position: "bottomright" }).addTo(leafletMap);
     leafletMap.on("click", () => clearHighlight());
